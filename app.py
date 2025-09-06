@@ -4,32 +4,36 @@ import plotly.express as px
 from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv
 from backend.analysis import dataframe_from_draws
+from backend.generator import gen_numbers
 from typing import List, Dict
-from itertools import combinations
 import random
-
-from backend.generator import gen_numbers  # 使用修改后的新版本
 
 st.set_page_config(page_title="大乐透分析与选号", page_icon="🎯", layout="wide")
 st.title("🎯 大乐透分析与选号（本地版）")
 
-# ------------------- 模块1：数据导入 -------------------
-with st.expander("📂 数据导入（本地 CSV）", expanded=True):
-    csv_file = st.file_uploader(
-        "选择 CSV 文件（列: issue,date,f1,f2,f3,f4,f5,b1,b2,sales,pool）", type=["csv"]
-    )
-    if csv_file:
-        if st.button("导入 CSV 数据"):
-            try:
-                n = import_csv(csv_file)
-                if n > 0:
-                    st.success(f"CSV 导入完成，共新增 {n} 条记录 ✅")
-                else:
-                    st.info("没有新增记录（可能 CSV 中的数据已在库中）")
-            except Exception as e:
-                st.error(f"导入失败：{e}")
+# --------------------- 顶部全局数据筛选 ---------------------
+st.sidebar.header("🔎 数据筛选器（全局）")
+start_issue = st.sidebar.text_input("起始期号", value="")
+end_issue = st.sidebar.text_input("结束期号", value="")
+start_date = st.sidebar.date_input("起始日期", value=None)
+end_date = st.sidebar.date_input("结束日期", value=None)
+recent_n = st.sidebar.number_input("最近 N 期", min_value=0, max_value=500, value=0)
 
-# ------------------- 初始化数据库并读取数据 -------------------
+def filter_df(df, start_issue="", end_issue="", start_date=None, end_date=None, recent_n=0):
+    df_filtered = df.copy()
+    if start_issue:
+        df_filtered = df_filtered[df_filtered['issue'] >= start_issue]
+    if end_issue:
+        df_filtered = df_filtered[df_filtered['issue'] <= end_issue]
+    if start_date:
+        df_filtered = df_filtered[df_filtered['date'] >= pd.to_datetime(start_date)]
+    if end_date:
+        df_filtered = df_filtered[df_filtered['date'] <= pd.to_datetime(end_date)]
+    if recent_n > 0:
+        df_filtered = df_filtered.tail(recent_n)
+    return df_filtered
+
+# --------------------- 初始化数据库 & 获取数据 ---------------------
 init_db()
 with session_scope() as s:
     rows = [{
@@ -44,46 +48,30 @@ if not rows:
     st.stop()
 
 df = dataframe_from_draws(rows)
+df_filtered = filter_df(df, start_issue, end_issue, start_date, end_date, recent_n)
 
-# ------------------- 模块2：数据表展示 -------------------
-with st.expander("📋 数据表（最近开奖示例）", expanded=True):
-    st.dataframe(df.head(50), use_container_width=True)
+# --------------------- Tab 分区 ---------------------
+tab_data, tab_chart, tab_generate = st.tabs(["📂 数据管理", "📊 数据图表", "🔢 号码生成"])
 
-# ------------------- 模块3：数据范围筛选 -------------------
-with st.expander("📅 数据筛选", expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        start_issue = st.text_input("起始期号", value="")
-    with col2:
-        end_issue = st.text_input("结束期号", value="")
+# --------------------- Tab 1：数据管理 ---------------------
+with tab_data:
+    with st.expander("CSV 导入", expanded=True):
+        csv_file = st.file_uploader("选择 CSV 文件（列: issue,date,f1,f2,f3,f4,f5,b1,b2,sales,pool）", type=["csv"])
+        if csv_file and st.button("导入 CSV 数据"):
+            try:
+                n = import_csv(csv_file)
+                if n > 0:
+                    st.success(f"CSV 导入完成，共新增 {n} 条记录 ✅")
+                else:
+                    st.info("没有新增记录（可能 CSV 中的数据已在库中）")
+            except Exception as e:
+                st.error(f"导入失败：{e}")
 
-    col3, col4 = st.columns(2)
-    with col3:
-        start_date = st.date_input("起始日期", value=None)
-    with col4:
-        end_date = st.date_input("结束日期", value=None)
+    st.subheader(f"数据表（筛选后，共 {len(df_filtered)} 条记录）")
+    st.dataframe(df_filtered.head(50), use_container_width=True)
 
-    recent_n = st.number_input("最近 N 期", min_value=0, max_value=500, value=0)
-
-    def filter_df(df, start_issue="", end_issue="", start_date=None, end_date=None, recent_n=0):
-        df_filtered = df.copy()
-        if start_issue:
-            df_filtered = df_filtered[df_filtered['issue'] >= start_issue]
-        if end_issue:
-            df_filtered = df_filtered[df_filtered['issue'] <= end_issue]
-        if start_date:
-            df_filtered = df_filtered[df_filtered['date'] >= pd.to_datetime(start_date)]
-        if end_date:
-            df_filtered = df_filtered[df_filtered['date'] <= pd.to_datetime(end_date)]
-        if recent_n > 0:
-            df_filtered = df_filtered.tail(recent_n)
-        return df_filtered
-
-    df_filtered = filter_df(df, start_issue, end_issue, start_date, end_date, recent_n)
-    st.write(f"筛选后共 {len(df_filtered)} 条记录")
-
-# ------------------- 模块4：数据图表 -------------------
-with st.expander("📊 号码区间落点统计", expanded=True):
+# --------------------- Tab 2：数据图表 ---------------------
+with tab_chart:
     front_bins = [(1,5),(6,10),(11,15),(16,20),(21,25),(26,30),(31,35)]
     front_labels = ["1-5","6-10","11-15","16-20","21-25","26-30","31-35"]
     back_bins = [(1,2),(3,4),(5,6),(7,8),(9,12)]
@@ -104,19 +92,17 @@ with st.expander("📊 号码区间落点统计", expanded=True):
 
     st.subheader("前区落点统计")
     df_front = pd.DataFrame(list(front_counts.items()), columns=["区间","次数"])
-    fig_front = px.bar(df_front, x="区间", y="次数", text="次数",
-                       color="次数", color_continuous_scale="Blues")
+    fig_front = px.bar(df_front, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Blues")
     st.plotly_chart(fig_front, use_container_width=True)
 
     st.subheader("后区落点统计")
     df_back = pd.DataFrame(list(back_counts.items()), columns=["区间","次数"])
-    fig_back = px.bar(df_back, x="区间", y="次数", text="次数",
-                      color="次数", color_continuous_scale="Reds")
+    fig_back = px.bar(df_back, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Reds")
     st.plotly_chart(fig_back, use_container_width=True)
 
-# ------------------- 模块5：号码生成 -------------------
-with st.expander("🔢 条件选号与组合生成", expanded=True):
-    st.subheader("选择号码区块（block）")
+# --------------------- Tab 3：号码生成 ---------------------
+with tab_generate:
+    st.subheader("选择号码区块")
     selected_front_blocks = st.multiselect("前区区块", front_labels, default=front_labels)
     selected_back_blocks = st.multiselect("后区区块", back_labels, default=back_labels)
 
@@ -133,44 +119,36 @@ with st.expander("🔢 条件选号与组合生成", expanded=True):
     st.write(f"前区可选号码：{sorted(front_pool)}")
     st.write(f"后区可选号码：{sorted(back_pool)}")
 
-    st.subheader("高级选号条件")
+    st.subheader("高级规则")
     colA, colB, colC = st.columns(3)
 
     with colA:
-        sum_min = st.number_input("前区和值最小", min_value=0, max_value=200, value=70)
-        sum_max = st.number_input("前区和值最大", min_value=0, max_value=200, value=140)
-        odd_count = st.number_input("前区奇数个数", min_value=0, max_value=5, value=3)
+        sum_min = st.number_input("前区和值最小", 0, 200, 70)
+        sum_max = st.number_input("前区和值最大", 0, 200, 140)
+        odd_count = st.number_input("前区奇数个数", 0, 5, 3)
 
     with colB:
-        front_include = st.text_input("前区必含(逗号分隔)", value="")
-        front_exclude = st.text_input("前区排除(逗号分隔)", value="")
-        consecutive_count = st.number_input("前区连号数量", min_value=0, max_value=5, value=0)
-        cons_mode_label = st.selectbox("连号匹配方式", options=["等于", "至少"])
-        consecutive_mode = "exact" if cons_mode_label == "等于" else "min"
+        front_include = st.text_input("前区必含(逗号分隔)", "")
+        front_exclude = st.text_input("前区排除(逗号分隔)", "")
+        consecutive_count = st.number_input("前区连号数量", 0, 5, 0)
+        cons_mode_label = st.selectbox("连号匹配方式", ["等于", "至少"])
+        consecutive_mode = "exact" if cons_mode_label=="等于" else "min"
 
     with colC:
-        back_include = st.text_input("后区必含(逗号分隔)", value="")
-        back_exclude = st.text_input("后区排除(逗号分隔)", value="")
-        exclude_hot_recent = st.checkbox("排除最近N期最热号码", value=False)
-        n_recent = st.number_input("最近 N 期", min_value=1, max_value=500, value=20)
+        back_include = st.text_input("后区必含(逗号分隔)", "")
+        back_exclude = st.text_input("后区排除(逗号分隔)", "")
+        exclude_hot_recent = st.checkbox("排除最近N期最热号码", True)
+        n_recent = st.number_input("最近 N 期", 1, 500, 20)
 
     def parse_nums(s: str):
-        s = s or ""
         s = s.replace("，", ",")
-        out = []
-        for x in s.split(","):
-            x = x.strip()
-            if x.isdigit():
-                out.append(int(x))
-        return out
+        return [int(x.strip()) for x in s.split(",") if x.strip().isdigit()]
 
     hot_front, hot_back = [], []
-    if exclude_hot_recent and not df.empty:
-        df_recent = df.tail(n_recent)
-        front_counts_hot = pd.concat([df_recent[c] for c in ["f1","f2","f3","f4","f5"]]).value_counts()
-        hot_front = front_counts_hot.head(3).index.tolist()
-        back_counts_hot = pd.concat([df_recent[c] for c in ["b1","b2"]]).value_counts()
-        hot_back = back_counts_hot.head(2).index.tolist()
+    if exclude_hot_recent and not df_filtered.empty:
+        df_recent = df_filtered.tail(n_recent)
+        hot_front = pd.concat([df_recent[c] for c in ["f1","f2","f3","f4","f5"]]).value_counts().head(3).index.tolist()
+        hot_back = pd.concat([df_recent[c] for c in ["b1","b2"]]).value_counts().head(2).index.tolist()
         st.info(f"排除热号：前区 {hot_front}，后区 {hot_back}")
 
     rules = {
@@ -185,17 +163,12 @@ with st.expander("🔢 条件选号与组合生成", expanded=True):
         "hot_front": hot_front
     }
 
-    max_gen = st.number_input("生成注数上限", min_value=1, max_value=100, value=20)
+    max_gen = st.number_input("生成注数上限", 1, 100, 20)
 
     if st.button("生成号码组合"):
-        with st.spinner("正在生成号码组合，请稍候..."):
+        with st.spinner("正在生成号码，请稍候..."):
             try:
-                cands = gen_numbers(
-                    count=max_gen,
-                    rules=rules,
-                    front_pool_user=front_pool,
-                    back_pool_user=back_pool
-                )
+                cands = gen_numbers(count=max_gen, rules=rules, front_pool_user=front_pool, back_pool_user=back_pool)
                 if not cands:
                     st.warning("未能生成满足条件的号码，请放宽条件或检查设置。")
                 else:
