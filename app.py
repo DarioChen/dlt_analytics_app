@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv
 from backend.analysis import dataframe_from_draws
@@ -41,6 +42,44 @@ if not rows:
 df = dataframe_from_draws(rows)
 st.subheader("最近开奖（示例）")
 st.dataframe(df.head(50), use_container_width=True)
+
+def count_numbers_in_bins(df: pd.DataFrame):
+    """统计每期号码落在每个格子里的次数"""
+    # 前区统计
+    front_counts = {label:0 for label in front_labels}
+    for col in ["f1","f2","f3","f4","f5"]:
+        for i,(lo,hi) in enumerate(front_bins):
+            front_counts[front_labels[i]] += df[col].apply(lambda x: lo<=x<=hi).sum()
+    # 后区统计
+    back_counts = {label:0 for label in back_labels}
+    for col in ["b1","b2"]:
+        for i,(lo,hi) in enumerate(back_bins):
+            back_counts[back_labels[i]] += df[col].apply(lambda x: lo<=x<=hi).sum()
+    return front_counts, back_counts
+
+
+# 前区格子边界
+front_bins = [(1,5),(6,10),(11,15),(16,20),(21,25),(26,30),(31,35)]
+front_labels = ["1-5","6-10","11-15","16-20","21-25","26-30","31-35"]
+# 后区格子边界
+back_bins = [(1,2),(3,4),(5,6),(7,8),(9,12)]
+back_labels = ["1-2","3-4","5-6","7-8","9-12"]
+
+# 假设 df 是你的历史开奖 DataFrame，列名 f1~f5,b1~b2
+front_counts, back_counts = count_numbers_in_bins(df)
+
+tab1, tab2 = st.tabs(["号码区间分布", "其他分析"])
+
+with tab1:
+    st.subheader("前区号码落在区间的次数")
+    df_front = pd.DataFrame(list(front_counts.items()), columns=["区间","次数"])
+    fig_front = px.bar(df_front, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Blues")
+    st.plotly_chart(fig_front, use_container_width=True)
+
+    st.subheader("后区号码落在区间的次数")
+    df_back = pd.DataFrame(list(back_counts.items()), columns=["区间","次数"])
+    fig_back = px.bar(df_back, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Reds")
+    st.plotly_chart(fig_back, use_container_width=True)
 
 # ---------------- 条件选号 UI ----------------
 st.subheader("🧪 条件选号（规则）")
