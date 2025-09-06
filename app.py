@@ -43,6 +43,22 @@ df = dataframe_from_draws(rows)
 st.subheader("最近开奖（示例）")
 st.dataframe(df.head(50), use_container_width=True)
 
+
+st.subheader("📅 数据范围筛选")
+col1, col2 = st.columns(2)
+with col1:
+    start_issue = st.text_input("起始期号（可留空）", value="")
+with col2:
+    end_issue = st.text_input("结束期号（可留空）", value="")
+
+col3, col4 = st.columns(2)
+with col3:
+    start_date = st.date_input("起始日期", value=None)
+with col4:
+    end_date = st.date_input("结束日期", value=None)
+
+recent_n = st.number_input("最近 N 期（可留空）", min_value=0, max_value=500, value=0)
+
 def count_numbers_in_bins(df: pd.DataFrame):
     """统计每期号码落在每个格子里的次数"""
     # 前区统计
@@ -70,13 +86,52 @@ front_counts, back_counts = count_numbers_in_bins(df)
 
 tab1, tab2 = st.tabs(["号码区间分布", "其他分析"])
 
+
+
+
+def filter_df(df: pd.DataFrame,
+              start_issue: str = "", end_issue: str = "",
+              start_date=None, end_date=None,
+              recent_n: int = 0) -> pd.DataFrame:
+    df_filtered = df.copy()
+
+    # 按期号筛选
+    if start_issue:
+        df_filtered = df_filtered[df_filtered['issue'] >= start_issue]
+    if end_issue:
+        df_filtered = df_filtered[df_filtered['issue'] <= end_issue]
+
+    # 按日期筛选
+    if start_date:
+        df_filtered = df_filtered[df_filtered['date'] >= pd.to_datetime(start_date)]
+    if end_date:
+        df_filtered = df_filtered[df_filtered['date'] <= pd.to_datetime(end_date)]
+
+    # 再取最近 N 期
+    if recent_n > 0:
+        df_filtered = df_filtered.tail(recent_n)
+
+    return df_filtered
+
+
+# 筛选数据
+df_filtered = filter_df(df,
+                        start_issue=start_issue,
+                        end_issue=end_issue,
+                        start_date=start_date,
+                        end_date=end_date,
+                        recent_n=recent_n)
+
+# 统计前后区号码落在区间的次数
+front_counts, back_counts = count_numbers_in_bins(df_filtered)
+
 with tab1:
-    st.subheader("前区号码落在区间的次数")
+    st.subheader(f"前区号码落在区间的次数（共 {len(df_filtered)} 期）")
     df_front = pd.DataFrame(list(front_counts.items()), columns=["区间","次数"])
     fig_front = px.bar(df_front, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Blues")
     st.plotly_chart(fig_front, use_container_width=True)
 
-    st.subheader("后区号码落在区间的次数")
+    st.subheader(f"后区号码落在区间的次数（共 {len(df_filtered)} 期）")
     df_back = pd.DataFrame(list(back_counts.items()), columns=["区间","次数"])
     fig_back = px.bar(df_back, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Reds")
     st.plotly_chart(fig_back, use_container_width=True)
