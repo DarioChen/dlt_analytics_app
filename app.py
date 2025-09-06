@@ -6,6 +6,9 @@ from backend.sync import import_csv
 from backend.analysis import dataframe_from_draws
 from backend.generator import gen_numbers
 from typing import List
+from itertools import combinations
+import random
+
 
 
 st.set_page_config(page_title="大乐透分析与选号", page_icon="🎯", layout="wide")
@@ -144,12 +147,16 @@ with colA:
     sum_min = st.number_input("前区和值最小", min_value=0, max_value=200, value=70)
     sum_max = st.number_input("前区和值最大", min_value=0, max_value=200, value=140)
     odd = st.number_input("前区奇数个数", min_value=0, max_value=5, value=3)
-    # 英文参数名, 中文 label
-    consecutive_count = st.number_input("前区连号数量", min_value=0, max_value=5, value=0, step=1)
+
 
 with colB:
     front_include = st.text_input("前区必含(逗号分隔)", value="")
     front_exclude = st.text_input("前区排除(逗号分隔)", value="")
+    # 英文参数名, 中文 label
+    consecutive_count = st.number_input("前区连号数量", min_value=0, max_value=5, value=0, step=1)
+    # 连号匹配方式（中文 label，英文参数值）
+    cons_mode_label = st.selectbox("连号匹配方式", options=["等于", "至少"])
+    consecutive_mode = "exact" if cons_mode_label == "等于" else "min"
 
 with colC:
     back_include = st.text_input("后区必含", value="")
@@ -158,9 +165,7 @@ with colC:
 with colD:
     exclude_hot_recent = st.checkbox("排除最近N期最热号码", value=False)
     n_recent = st.number_input("最近 N 期", min_value=1, max_value=500, value=20)
-    # 连号匹配方式（中文 label，英文参数值）
-    cons_mode_label = st.selectbox("连号匹配方式", options=["等于", "至少"])
-    consecutive_mode = "exact" if cons_mode_label == "等于" else "min"
+
 
 def parse_nums(s: str) -> List[int]:
     s = s or ""
@@ -209,3 +214,54 @@ if st.button("生成候选号码"):
         st.error(f"生成失败：{e}")
 
 st.caption("© 本工具仅作学习交流，勿用于非法用途。")
+
+
+st.subheader("🔢 前区/后区区块选号组合生成")
+# --------- 用户选择 block ---------
+selected_front_blocks = st.multiselect("选择前区区块（block）", front_labels, default=front_labels)
+selected_back_blocks = st.multiselect("选择后区区块（block）", back_labels, default=back_labels)
+
+
+# --------- 根据选择 block 构建可选号码池 ---------
+def get_numbers_from_blocks(selected_labels, all_labels, all_bins):
+    numbers = []
+    for label, (lo, hi) in zip(all_labels, all_bins):
+        if label in selected_labels:
+            numbers.extend(range(lo, hi + 1))
+    return numbers
+
+
+front_pool = get_numbers_from_blocks(selected_front_blocks, front_labels, front_bins)
+back_pool = get_numbers_from_blocks(selected_back_blocks, back_labels, back_bins)
+
+st.write(f"前区可选号码：{sorted(front_pool)}")
+st.write(f"后区可选号码：{sorted(back_pool)}")
+
+
+# --------- 组合生成 ---------
+def generate_combinations(front_pool, back_pool, max_count=20):
+    if len(front_pool) < 5 or len(back_pool) < 2:
+        return []
+
+    front_combos = list(combinations(sorted(front_pool), 5))
+    back_combos = list(combinations(sorted(back_pool), 2))
+
+    all_combos = []
+    for f in front_combos:
+        for b in back_combos:
+            all_combos.append({"front": list(f), "back": list(b)})
+
+    random.shuffle(all_combos)
+    return all_combos[:max_count]
+
+
+max_gen = st.number_input("生成注数上限", min_value=1, max_value=100, value=20)
+
+if st.button("生成号码组合"):
+    combos = generate_combinations(front_pool, back_pool, max_count=max_gen)
+    if not combos:
+        st.warning("前区至少选择5个号码，后区至少选择2个号码。")
+    else:
+        st.success(f"生成 {len(combos)} 注号码：")
+        for i, c in enumerate(combos, 1):
+            st.write(f"第{i}注：前区 {c['front']} | 后区 {c['back']}")
