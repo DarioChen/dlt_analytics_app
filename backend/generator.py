@@ -1,27 +1,22 @@
+# backend/generator.py
 from __future__ import annotations
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional
 import random
 
 def gen_numbers(
     count: int = 5,
     rules: Optional[Dict] = None,
     rng: Optional[random.Random] = None,
-    front_pool_user: Optional[List[int]] = None,  # 新增：用户可选前区池
-    back_pool_user: Optional[List[int]] = None    # 新增：用户可选后区池
+    front_pool_user: Optional[List[int]] = None,
+    back_pool_user: Optional[List[int]] = None,
+    front_blocks: Optional[Dict[str, List[int]]] = None,
+    back_blocks: Optional[Dict[str, List[int]]] = None,
+    front_weights: Optional[Dict[str, float]] = None,
+    back_weights: Optional[Dict[str, float]] = None,
+    use_block_weight: bool = False
 ) -> List[Dict]:
-    """
-    生成候选号码列表（返回长度最多为 count 的列表，元素为 {"front": [...], "back": [...]}）
-    """
     rng = rng or random.Random()
     rules = rules or {}
-
-    def weighted_pool(pool: List[int], hot: Set[int] = set(), cold: Set[int] = set()) -> List[int]:
-        out = []
-        for n in pool:
-            w = 3 if n in hot else (0.7 if n in cold else 1.0)
-            repeat = max(1, int(w * 10))
-            out.extend([n] * repeat)
-        return out or pool
 
     def consecutive_pairs_count(front_sorted: List[int]) -> int:
         cnt = 0
@@ -29,6 +24,32 @@ def gen_numbers(
             if front_sorted[i] == front_sorted[i - 1] + 1:
                 cnt += 1
         return cnt
+
+    def choose_from_weighted_blocks(blocks: Dict[str,List[int]], weights: Dict[str,float], num_needed:int) -> List[int]:
+        valid_blocks = {b: nums for b, nums in blocks.items() if weights.get(b, 0) > 0}
+        if not valid_blocks:
+            valid_blocks = blocks
+
+        total_w = sum(weights.get(b, 1.0) for b in valid_blocks)
+        norm_weights = {b: weights.get(b,1.0)/total_w for b in valid_blocks}
+
+        counts = {b: int(norm_weights[b]*num_needed) for b in valid_blocks}
+        total_selected = sum(counts.values())
+        remaining = num_needed - total_selected
+
+        block_names = list(valid_blocks.keys())
+        probs = [norm_weights[b] for b in block_names]
+        for _ in range(remaining):
+            chosen_block = rng.choices(block_names, probs, k=1)[0]
+            counts[chosen_block] += 1
+
+        result = []
+        for b, c in counts.items():
+            nums = valid_blocks[b].copy()
+            rng.shuffle(nums)
+            result.extend(nums[:c])
+        rng.shuffle(result)
+        return sorted(result[:num_needed])
 
     results: List[Dict] = []
     tries = 0
@@ -39,7 +60,6 @@ def gen_numbers(
     back_exclude = set(rules.get("back_exclude", []))
     back_include = set(rules.get("back_include", []))
     hot_front = set(rules.get("hot_front", []))
-    cold_front = set(rules.get("cold_front", []))
     sum_range = rules.get("sum_front_range", [None, None])
     odd_even = rules.get("odd_even_front", None)
     cons_req = rules.get("consecutive_count", None)
@@ -48,51 +68,31 @@ def gen_numbers(
     while len(results) < count and tries < max_tries:
         tries += 1
 
-        # 使用用户提供的 pool，如果没有就默认 1-35 / 1-12
         front_pool = front_pool_user if front_pool_user is not None else [n for n in range(1, 36)]
         back_pool = back_pool_user if back_pool_user is not None else [n for n in range(1, 13)]
 
-        # 排除用户指定的排除号码
         front_pool = [n for n in front_pool if n not in front_exclude]
         back_pool = [n for n in back_pool if n not in back_exclude]
 
         if len(front_pool) < 5 or len(back_pool) < 2:
             break
 
-        front_pool_w = weighted_pool(front_pool, hot=hot_front, cold=cold_front)
-        f: List[int] = []
-        attempts_inner = 0
-        while len(f) < 5 and attempts_inner < 200:
-            attempts_inner += 1
-            candidate = rng.choice(front_pool_w)
-            if candidate not in f:
-                f.append(candidate)
-        if len(f) < 5:
+        if use_block_weight and front_blocks and front_weights:
+            f = choose_from_weighted_blocks(front_blocks, front_weights, 5)
+        else:
             f = sorted(rng.sample(front_pool, 5))
-        else:
-            f = sorted(f)
 
-        b: List[int] = []
-        attempts_b = 0
-        while len(b) < 2 and attempts_b < 100:
-            attempts_b += 1
-            cand = rng.choice(back_pool)
-            if cand not in b:
-                b.append(cand)
-        if len(b) < 2:
-            b = sorted(rng.sample(back_pool, 2))
+        if use_block_weight and back_blocks and back_weights:
+            b = choose_from_weighted_blocks(back_blocks, back_weights, 2)
         else:
-            b = sorted(b)
+            b = sorted(rng.sample(back_pool, 2))
 
         ok = True
-
-        # 必包含
         if front_include and not front_include.issubset(set(f)):
             ok = False
         if back_include and not back_include.issubset(set(b)):
             ok = False
 
-        # 和值范围
         s = sum(f)
         smin, smax = sum_range if sum_range is not None else (None, None)
         if smin is not None and s < smin:
@@ -100,7 +100,6 @@ def gen_numbers(
         if smax is not None and s > smax:
             ok = False
 
-        # 奇偶数
         if odd_even:
             odd_need, even_need = odd_even[0], odd_even[1]
             odd_actual = sum(1 for x in f if x % 2 == 1)
@@ -108,7 +107,6 @@ def gen_numbers(
             if odd_actual != odd_need or even_actual != even_need:
                 ok = False
 
-        # 连号数量
         if cons_req is not None:
             cnt = consecutive_pairs_count(f)
             if cons_mode == "exact" and cnt != cons_req:
