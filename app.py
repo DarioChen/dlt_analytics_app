@@ -191,13 +191,13 @@ with tab_generate:
     win_back_input = st.text_input("中奖后区号码（逗号分隔）", "")
 
     prize_colors = {
-        "一等奖":"#FFD700",
-        "二等奖":"#FFA500",
-        "三等奖":"#FF8C00",
-        "四等奖":"#FF6347",
-        "五等奖":"#FF4500",
-        "六等奖":"#FF1493",
-        "七等奖":"#00CED1",
+        "一等奖 1000W":"#FFD700",
+        "二等奖 500W":"#FFA500",
+        "三等奖 1W":"#FF8C00",
+        "四等奖 3K":"#FF6347",
+        "五等奖 300":"#FF4500",
+        "六等奖 200":"#FF1493",
+        "七等奖 100":"#00CED1",
         "八等奖":"#20B2AA",
         "九等奖":"#ADFF2F",
         "十等奖":"#7CFC00",
@@ -209,27 +209,27 @@ with tab_generate:
         fc = len(set(gen_front) & set(win_front))
         bc = len(set(gen_back) & set(win_back))
         if fc == 5 and bc == 2:
-            return "一等奖"
+            return "一等奖 1000W"
         elif fc == 5 and bc == 1:
-            return "二等奖"
+            return "二等奖 500W"
         elif fc == 5:
-            return "三等奖"
+            return "三等奖 1W"
         elif fc == 4 and bc == 2:
-            return "四等奖"
+            return "四等奖 3K"
         elif fc == 4 and bc == 1:
-            return "五等奖"
+            return "五等奖 300"
         elif fc == 3 and bc == 2:
-            return "六等奖"
+            return "六等奖 200"
         elif fc == 4:
-            return "七等奖"
+            return "七等奖 100"
         elif fc == 3 and bc == 1:
             return "八等奖"
         elif fc == 2 and bc == 2:
-            return "九等奖"
+            return "八等奖"
         elif fc == 1 and bc == 2:
-            return "十等奖"
+            return "九等奖"
         elif bc == 2:
-            return "十一等奖"
+            return "九等奖"
         else:
             return "未中奖"
 

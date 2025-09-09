@@ -25,26 +25,35 @@ def gen_numbers(
                 cnt += 1
         return cnt
 
-    def choose_from_weighted_blocks(blocks: Dict[str,List[int]], weights: Dict[str,float], num_needed:int) -> List[int]:
-        valid_blocks = {b: nums for b, nums in blocks.items() if weights.get(b,0)>0}
-        if not valid_blocks:
-            valid_blocks = blocks
-        total_w = sum(weights.get(b,1.0) for b in valid_blocks)
-        norm_weights = {b: weights.get(b,1.0)/total_w for b in valid_blocks}
-        counts = {b:int(norm_weights[b]*num_needed) for b in valid_blocks}
+    def choose_from_weighted_blocks(blocks: Dict[str, List[int]], weights: Dict[str, float], num_needed: int,
+                                    exclude_nums: set = None) -> List[int]:
+        exclude_nums = exclude_nums or set()
+        # 过滤每个区块里的排除数字
+        valid_blocks = {b: [n for n in nums if n not in exclude_nums] for b, nums in blocks.items() if
+                        weights.get(b, 0) > 0}
+        # 如果过滤后没有数字，退回原始区块
+        if all(len(v) == 0 for v in valid_blocks.values()):
+            valid_blocks = {b: [n for n in nums if n not in exclude_nums] for b, nums in blocks.items()}
+
+        total_w = sum(weights.get(b, 1.0) for b in valid_blocks)
+        norm_weights = {b: weights.get(b, 1.0) / total_w for b in valid_blocks}
+
+        counts = {b: int(norm_weights[b] * num_needed) for b in valid_blocks}
         total_selected = sum(counts.values())
         remaining = num_needed - total_selected
+
         block_names = list(valid_blocks.keys())
         probs = [norm_weights[b] for b in block_names]
         for _ in range(remaining):
-            chosen_block = rng.choices(block_names, probs, k=1)[0]
+            chosen_block = random.choices(block_names, probs, k=1)[0]
             counts[chosen_block] += 1
+
         result = []
-        for b,c in counts.items():
+        for b, c in counts.items():
             nums = valid_blocks[b].copy()
-            rng.shuffle(nums)
+            random.shuffle(nums)
             result.extend(nums[:c])
-        rng.shuffle(result)
+        random.shuffle(result)
         return sorted(result[:num_needed])
 
     results: List[Dict] = []
@@ -72,12 +81,13 @@ def gen_numbers(
             break
 
         if use_block_weight and front_blocks and front_weights:
-            f = choose_from_weighted_blocks(front_blocks, front_weights,5)
+            f = choose_from_weighted_blocks(front_blocks, front_weights, 5, exclude_nums=front_exclude)
+
         else:
             f = sorted(rng.sample(front_pool,5))
 
         if use_block_weight and back_blocks and back_weights:
-            b = choose_from_weighted_blocks(back_blocks, back_weights,2)
+            b = choose_from_weighted_blocks(back_blocks, back_weights, 2, exclude_nums=back_exclude)
         else:
             b = sorted(rng.sample(back_pool,2))
 
