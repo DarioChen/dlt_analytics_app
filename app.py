@@ -100,8 +100,21 @@ with tab_chart:
             for i,(lo,hi) in enumerate(front_bins):
                 if lo <= val <= hi:
                     front_matrix.at[row['issue'], front_labels[i]] = 1
-    fig_matrix = px.imshow(front_matrix, text_auto=True, color_continuous_scale="Blues", labels=dict(x="区块",y="期号",color="落点"))
-    st.plotly_chart(fig_matrix, use_container_width=True)
+    fig_front_matrix = px.imshow(front_matrix, text_auto=True, color_continuous_scale="Blues",
+                                 labels=dict(x="区块",y="期号",color="落点"))
+    st.plotly_chart(fig_front_matrix, use_container_width=True)
+
+    st.subheader("每期区块落点热力图（后区）")
+    back_matrix = pd.DataFrame(0, index=df_filtered['issue'], columns=back_labels)
+    for _, row in df_filtered.iterrows():
+        for col in ["b1","b2"]:
+            val = row[col]
+            for i,(lo,hi) in enumerate(back_bins):
+                if lo <= val <= hi:
+                    back_matrix.at[row['issue'], back_labels[i]] = 1
+    fig_back_matrix = px.imshow(back_matrix, text_auto=True, color_continuous_scale="Reds",
+                                labels=dict(x="区块",y="期号",color="落点"))
+    st.plotly_chart(fig_back_matrix, use_container_width=True)
 
 # --------------------- Tab3: 号码生成 ---------------------
 with tab_generate:
@@ -237,4 +250,4 @@ with tab_generate:
         for i, cd in enumerate(cands,1):
             prize = check_prize(cd['front'], cd['back'], win_front, win_back)
             color = prize_colors.get(prize,"white")
-            st.markdown(f"<span style='background-color:{color}; padding:4px'>第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}</span>", unsafe_allow_html=True)
+            st.markdown(f"<div style='background-color:{color};padding:5px;margin:2px;border-radius:5px'>第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}</div>", unsafe_allow_html=True)
