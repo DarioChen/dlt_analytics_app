@@ -147,7 +147,6 @@ with tab_generate:
         back_exclude = st.text_input("后区排除(逗号分隔)", "")
 
     max_gen = st.number_input("生成注数上限", 1, 100, 5)
-    use_block_weight = st.checkbox("使用区块权重", True)
 
     def parse_nums(s: str):
         s = s.replace("，", ",")
@@ -194,13 +193,12 @@ with tab_generate:
         cands = gen_numbers(
             count=max_gen,
             rules=rules,
-            front_pool_user=front_pool,
-            back_pool_user=back_pool,
-            front_blocks={label: list(range(lo, hi+1)) for label, (lo, hi) in zip(front_labels, front_bins)},
-            back_blocks={label: list(range(lo, hi+1)) for label, (lo, hi) in zip(back_labels, back_bins)},
+            front_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)},
+            back_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)},
             front_weights=front_weights,
             back_weights=back_weights,
-            use_block_weight=use_block_weight
+            selected_front_blocks=selected_front_blocks,
+            selected_back_blocks=selected_back_blocks
         )
         for i, cd in enumerate(cands, 1):
             prize = check_prize(cd['front'], cd['back'], win_front, win_back)
