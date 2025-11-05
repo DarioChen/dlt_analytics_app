@@ -31,7 +31,7 @@ def filter_df(df, start_issue="", end_issue="", start_date=None, end_date=None, 
         df_filtered = df_filtered[df_filtered['date'] <= pd.to_datetime(end_date)]
     if recent_n > 0:
         df_filtered = df_filtered.sort_values("date", ascending=False).head(recent_n)
-    return df_filtered
+    return df_filtered.reset_index(drop=True)
 
 # --------------------- 初始化数据库 ---------------------
 init_db()
@@ -53,68 +53,50 @@ df_filtered = filter_df(df, start_issue, end_issue, start_date, end_date, recent
 # --------------------- Tabs ---------------------
 tab_data, tab_chart, tab_generate = st.tabs(["📂 数据管理", "📊 数据图表", "🔢 号码生成"])
 
+# --------------------- 区块配置 ---------------------
 front_bins = [(1,5),(6,10),(11,15),(16,20),(21,25),(26,30),(31,35)]
 front_labels = ["1-5","6-10","11-15","16-20","21-25","26-30","31-35"]
-back_bins = [(1,2),(3,4),(5,6),(7,8),(9,12)]
-back_labels = ["1-2","3-4","5-6","7-8","9-12"]
+# 后区拆分为连续区块
+back_bins = [(1,2),(2,3),(3,4),(4,5),(5,6),(6,7),(7,8),(8,9),(9,10),(10,11),(11,12)]
+back_labels = [f"{lo}-{hi}" for lo, hi in back_bins]
 
 # --------------------- Tab1: 数据管理 ---------------------
 with tab_data:
-    with st.expander("CSV 导入", expanded=True):
+    with st.expander("CSV 导入与模板", expanded=True):
+        st.markdown("**CSV 格式示例**：`issue,date,f1,f2,f3,f4,f5,b1,b2,sales,pool`")
+        st.text("20251001,2025-10-01,1,2,3,4,5,1,2,1000000,5000000")
         csv_file = st.file_uploader("选择 CSV 文件", type=["csv"])
         if csv_file and st.button("导入 CSV 数据"):
             try:
-                n = import_csv(csv_file)
-                st.success(f"导入 {n} 条数据")
+                result = import_csv(csv_file)
+                st.success(f"导入数据结果：{result}")
             except Exception as e:
                 st.error(f"导入失败：{e}")
+
     st.subheader(f"数据表（共 {len(df_filtered)} 条）")
     st.dataframe(df_filtered.head(50), use_container_width=True)
 
 # --------------------- Tab2: 数据图表 ---------------------
 with tab_chart:
-    st.subheader("前区落点统计")
-    front_counts = {label:0 for label in front_labels}
+    st.subheader("前区落点热力图")
+    front_matrix = pd.DataFrame(0, index=df_filtered.index, columns=front_labels)
     for col in ["f1","f2","f3","f4","f5"]:
         for i,(lo,hi) in enumerate(front_bins):
-            front_counts[front_labels[i]] += df_filtered[col].apply(lambda x: lo<=x<=hi).sum()
-    df_front = pd.DataFrame(list(front_counts.items()), columns=["区间","次数"])
-    fig_front = px.bar(df_front, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Blues")
+            mask = df_filtered[col].between(lo, hi)
+            front_matrix.loc[df_filtered.index[mask], front_labels[i]] = 1
+    fig_front = px.imshow(front_matrix.T, color_continuous_scale="Blues",
+                          labels=dict(x="期号", y="区块", color="次数"))
     st.plotly_chart(fig_front, use_container_width=True)
 
-    st.subheader("后区落点统计")
-    back_counts = {label:0 for label in back_labels}
+    st.subheader("后区落点热力图")
+    back_matrix = pd.DataFrame(0, index=df_filtered.index, columns=back_labels)
     for col in ["b1","b2"]:
         for i,(lo,hi) in enumerate(back_bins):
-            back_counts[back_labels[i]] += df_filtered[col].apply(lambda x: lo<=x<=hi).sum()
-    df_back = pd.DataFrame(list(back_counts.items()), columns=["区间","次数"])
-    fig_back = px.bar(df_back, x="区间", y="次数", text="次数", color="次数", color_continuous_scale="Reds")
+            mask = df_filtered[col].between(lo, hi)
+            back_matrix.loc[df_filtered.index[mask], back_labels[i]] = 1
+    fig_back = px.imshow(back_matrix.T, color_continuous_scale="Reds",
+                         labels=dict(x="期号", y="区块", color="次数"))
     st.plotly_chart(fig_back, use_container_width=True)
-
-    # 每期区块落点矩阵
-    st.subheader("每期区块落点热力图（前区）")
-    front_matrix = pd.DataFrame(0, index=df_filtered['issue'], columns=front_labels)
-    for _, row in df_filtered.iterrows():
-        for col in ["f1","f2","f3","f4","f5"]:
-            val = row[col]
-            for i,(lo,hi) in enumerate(front_bins):
-                if lo <= val <= hi:
-                    front_matrix.at[row['issue'], front_labels[i]] = 1
-    fig_front_matrix = px.imshow(front_matrix, text_auto=True, color_continuous_scale="Blues",
-                                 labels=dict(x="区块",y="期号",color="落点"))
-    st.plotly_chart(fig_front_matrix, use_container_width=True)
-
-    st.subheader("每期区块落点热力图（后区）")
-    back_matrix = pd.DataFrame(0, index=df_filtered['issue'], columns=back_labels)
-    for _, row in df_filtered.iterrows():
-        for col in ["b1","b2"]:
-            val = row[col]
-            for i,(lo,hi) in enumerate(back_bins):
-                if lo <= val <= hi:
-                    back_matrix.at[row['issue'], back_labels[i]] = 1
-    fig_back_matrix = px.imshow(back_matrix, text_auto=True, color_continuous_scale="Reds",
-                                labels=dict(x="区块",y="期号",color="落点"))
-    st.plotly_chart(fig_back_matrix, use_container_width=True)
 
 # --------------------- Tab3: 号码生成 ---------------------
 with tab_generate:
@@ -150,24 +132,21 @@ with tab_generate:
 
     st.subheader("高级规则")
     colA, colB, colC = st.columns(3)
-
     with colA:
         sum_min = st.number_input("前区和值最小", 0, 200, 70)
         sum_max = st.number_input("前区和值最大", 0, 200, 140)
         odd_count = st.number_input("前区奇数个数", 0, 5, 3)
-
     with colB:
         front_include = st.text_input("前区必含(逗号分隔)", "")
         front_exclude = st.text_input("前区排除(逗号分隔)", "")
         consecutive_count = st.number_input("前区连号数量", 0, 5, 0)
         cons_mode_label = st.selectbox("连号匹配方式", ["等于", "至少"])
         consecutive_mode = "exact" if cons_mode_label=="等于" else "min"
-
     with colC:
         back_include = st.text_input("后区必含(逗号分隔)", "")
         back_exclude = st.text_input("后区排除(逗号分隔)", "")
 
-    max_gen = st.number_input("生成注数上限", 1, 100, 20)
+    max_gen = st.number_input("生成注数上限", 1, 100, 5)
     use_block_weight = st.checkbox("使用区块权重", True)
 
     def parse_nums(s: str):
@@ -185,53 +164,29 @@ with tab_generate:
         "consecutive_mode": consecutive_mode
     }
 
-    # --------------------- 中奖号码比对 ---------------------
     st.subheader("🎯 中奖号码比对")
     win_front_input = st.text_input("中奖前区号码（逗号分隔）", "")
     win_back_input = st.text_input("中奖后区号码（逗号分隔）", "")
 
-    prize_colors = {
-        "一等奖 1000W":"#FFD700",
-        "二等奖 500W":"#FFA500",
-        "三等奖 1W":"#FF8C00",
-        "四等奖 3K":"#FF6347",
-        "五等奖 300":"#FF4500",
-        "六等奖 200":"#FF1493",
-        "七等奖 100":"#00CED1",
-        "八等奖":"#20B2AA",
-        "九等奖":"#ADFF2F",
-        "十等奖":"#7CFC00",
-        "十一等奖":"#32CD32",
-        "未中奖":"white"
-    }
+    prize_rules = [
+        ("一等奖", lambda f,b: len(f)==5 and len(b)==2, "浮动，单注最高500万"),
+        ("二等奖", lambda f,b: len(f)==5 and len(b)==1, "浮动，单注最高500万"),
+        ("三等奖", lambda f,b: len(f)==5, "10000元"),
+        ("四等奖", lambda f,b: len(f)>=4 and len(b)==2, "3000元"),
+        ("五等奖", lambda f,b: len(f)>=4 and len(b)==1, "300元"),
+        ("六等奖", lambda f,b: len(f)>=3 and len(b)==2, "200元"),
+        ("七等奖", lambda f,b: len(f)>=4, "100元"),
+        ("八等奖", lambda f,b: (len(f)>=3 and len(b)>=1) or (len(f)>=2 and len(b)>=2), "15元"),
+        ("九等奖", lambda f,b: (len(f)>=3) or (len(f)>=1 and len(b)>=2) or (len(f)>=2 and len(b)>=1) or (len(b)>=2), "5元")
+    ]
 
     def check_prize(gen_front, gen_back, win_front, win_back):
         fc = len(set(gen_front) & set(win_front))
         bc = len(set(gen_back) & set(win_back))
-        if fc == 5 and bc == 2:
-            return "一等奖 1000W"
-        elif fc == 5 and bc == 1:
-            return "二等奖 500W"
-        elif fc == 5:
-            return "三等奖 1W"
-        elif fc == 4 and bc == 2:
-            return "四等奖 3K"
-        elif fc == 4 and bc == 1:
-            return "五等奖 300"
-        elif fc == 3 and bc == 2:
-            return "六等奖 200"
-        elif fc == 4:
-            return "七等奖 100"
-        elif fc == 3 and bc == 1:
-            return "八等奖"
-        elif fc == 2 and bc == 2:
-            return "八等奖"
-        elif fc == 1 and bc == 2:
-            return "九等奖"
-        elif bc == 2:
-            return "九等奖"
-        else:
-            return "未中奖"
+        for name, cond, bonus in prize_rules:
+            if cond(range(fc), range(bc)):
+                return f"{name} {bonus}"
+        return "未中奖"
 
     if st.button("生成号码并比对"):
         win_front = parse_nums(win_front_input)
@@ -241,13 +196,12 @@ with tab_generate:
             rules=rules,
             front_pool_user=front_pool,
             back_pool_user=back_pool,
-            front_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(front_labels,front_bins)},
-            back_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(back_labels,back_bins)},
+            front_blocks={label: list(range(lo, hi+1)) for label, (lo, hi) in zip(front_labels, front_bins)},
+            back_blocks={label: list(range(lo, hi+1)) for label, (lo, hi) in zip(back_labels, back_bins)},
             front_weights=front_weights,
             back_weights=back_weights,
             use_block_weight=use_block_weight
         )
-        for i, cd in enumerate(cands,1):
+        for i, cd in enumerate(cands, 1):
             prize = check_prize(cd['front'], cd['back'], win_front, win_back)
-            color = prize_colors.get(prize,"white")
-            st.markdown(f"<div style='background-color:{color};padding:5px;margin:2px;border-radius:5px'>第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}</div>", unsafe_allow_html=True)
+            st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
