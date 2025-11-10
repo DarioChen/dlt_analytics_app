@@ -208,8 +208,8 @@ with tab_predict:
         """
         **预测说明**：
         - 从当前筛选后的历史数据统计出现频次
-        - 区块平均出现频率映射为权重
-        - 使用权重驱动 generator 生成预测号码
+        - 可设置最小奇数个数、最小连号数量
+        - 可排除前 N 期出现次数最多号码
         - 支持回测历史 N 期预测结果并比对中奖情况
         """
     )
@@ -217,7 +217,7 @@ with tab_predict:
     # ----------------- 全局规则 -----------------
     predict_rules = {
         "sum_front_range": [0, 999],
-        "odd_even_front": [0,5],
+        "odd_even_front": [0, 5],
         "front_include": [],
         "front_exclude": [],
         "back_include": [],
@@ -228,24 +228,21 @@ with tab_predict:
 
     col1, col2 = st.columns([2,1])
     with col1:
-        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=100)
-        out_min = st.slider("权重映射最小值", 0.05, 1.0, 0.2)
-        out_max = st.slider("权重映射最大值", 1.0, 3.0, 1.5)
-        pred_count = st.number_input("预测注数（count）", min_value=1, max_value=20, value=5)
+        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=100, key="tab4_recent_n")
+        pred_count = st.number_input("每期预测注数", min_value=1, max_value=20, value=5, key="tab4_pred_count")
         pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
-        backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10)
-        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0)
-        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=0)
-        exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False)
-        exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3)
-        exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2)
+        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0, key="tab4_min_consec")
+        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=0, key="tab4_min_odd")
+        exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False, key="tab4_exclude_top_n")
+        exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
+        exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
+        backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
     with col2:
         st.markdown("""
         **说明**：
-        - 最近 N 期用于捕捉近期冷热
-        - out_min/out_max 控制热号/冷号权重差异
         - 可生成未来预测并对历史回测进行中奖比对
+        - 每期预测结果放一行，多注列显示
         """)
 
     # ----------------- 计算区块权重 -----------------
@@ -254,8 +251,8 @@ with tab_predict:
         front_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(front_labels, front_bins)},
         back_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(back_labels, back_bins)},
         recent_n=use_recent_n,
-        out_min=out_min,
-        out_max=out_max
+        out_min=0.2,
+        out_max=1.5
     )
 
     # ----------------- 排除高频号码 -----------------
@@ -280,7 +277,7 @@ with tab_predict:
     )
 
     # ----------------- 生成未来预测号码 -----------------
-    if st.button("生成未来预测号码"):
+    if st.button("生成未来预测号码", key="tab4_gen_future"):
         rules_future = predict_rules.copy()
         rules_future["consecutive_count"] = min_consec
         rules_future["odd_even_front"] = [min_odd, 5-min_odd]
@@ -383,6 +380,7 @@ with tab_predict:
         # 样式
         prize_cols = [col for col in backtest_df.columns if "中奖情况" in col]
         st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols), use_container_width=True)
+
 
 
 
