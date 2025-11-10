@@ -201,12 +201,12 @@ with tab_generate:
             st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
 
 
-# --------------------- Tab4: 未来号码预测 + 历史回测 ---------------------
+# --------------------- Tab4: 未来号码预测 + 历史回测（优化版） ---------------------
 with tab_predict:
     st.header("🔮 基于历史冷热权重的未来号码预测 & 回测")
     st.markdown(
         """
-        **说明**：
+        **预测说明**：
         - 从当前筛选后的历史数据统计出现频次
         - 区块平均出现频率映射为权重
         - 使用权重驱动 generator 生成预测号码
@@ -214,7 +214,7 @@ with tab_predict:
         """
     )
 
-    # ----------------- Tab4 全局规则 -----------------
+    # ----------------- 全局规则 -----------------
     predict_rules = {
         "sum_front_range": [0, 999],
         "odd_even_front": [0,5],
@@ -235,6 +235,11 @@ with tab_predict:
         pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10)
+        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0)
+        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=0)
+        exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False)
+        exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3)
+        exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2)
     with col2:
         st.markdown("""
         **说明**：
@@ -253,25 +258,14 @@ with tab_predict:
         out_max=out_max
     )
 
-    # ----------------- 显示权重表 -----------------
-    st.subheader("区块权重（历史频次映射）")
-    colf, colb = st.columns(2)
-    with colf:
-        st.table(pd.DataFrame({"前区区块": list(front_block_weights.keys()), "前区权重": list(front_block_weights.values())}))
-    with colb:
-        st.table(pd.DataFrame({"后区区块": list(back_block_weights.keys()), "后区权重": list(back_block_weights.values())}))
-
-    # ----------------- 显示号码出现次数直方图 -----------------
-    st.subheader("号码出现次数（前区/后区）")
-    colf2, colb2 = st.columns(2)
-    with colf2:
-        ffreq_df = pd.DataFrame(sorted(front_freq_map.items()), columns=["number","count"])
-        fig_ff = px.bar(ffreq_df, x="number", y="count", labels={"count":"出现次数","number":"号码"})
-        st.plotly_chart(fig_ff, use_container_width=True)
-    with colb2:
-        bfreq_df = pd.DataFrame(sorted(back_freq_map.items()), columns=["number","count"])
-        fig_bf = px.bar(bfreq_df, x="number", y="count", labels={"count":"出现次数","number":"号码"})
-        st.plotly_chart(fig_bf, use_container_width=True)
+    # ----------------- 排除高频号码 -----------------
+    exclude_front = []
+    exclude_back = []
+    if exclude_top_n:
+        top_front = sorted(front_freq_map.items(), key=lambda x: -x[1])[:exclude_top_front_n]
+        top_back = sorted(back_freq_map.items(), key=lambda x: -x[1])[:exclude_top_back_n]
+        exclude_front = [n for n,_ in top_front]
+        exclude_back = [n for n,_ in top_back]
 
     # ----------------- 准备 generator 输入 -----------------
     gen_front_blocks, gen_back_blocks, gen_front_weights, gen_back_weights = prepare_generator_inputs(
@@ -287,9 +281,15 @@ with tab_predict:
 
     # ----------------- 生成未来预测号码 -----------------
     if st.button("生成未来预测号码"):
+        rules_future = predict_rules.copy()
+        rules_future["consecutive_count"] = min_consec
+        rules_future["odd_even_front"] = [min_odd, 5-min_odd]
+        rules_future["front_exclude"] = exclude_front
+        rules_future["back_exclude"] = exclude_back
+
         cands = genmod.gen_numbers(
             count=pred_count,
-            rules=predict_rules,
+            rules=rules_future,
             front_blocks=gen_front_blocks,
             back_blocks=gen_back_blocks,
             front_weights=gen_front_weights,
@@ -297,14 +297,17 @@ with tab_predict:
             selected_front_blocks=pred_selected_front,
             selected_back_blocks=pred_selected_back
         )
+
         if not cands:
             st.warning("未生成到符合条件的号码，请调整参数重试。")
         else:
-            pred_df = pd.DataFrame([{
-                "前区": ",".join(map(str, c["front"])),
-                "后区": ",".join(map(str, c["back"])),
-                "中奖情况": "未比对"
-            } for c in cands])
+            # 每注一列显示
+            row_data = {}
+            for i, c in enumerate(cands, 1):
+                row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
+                row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
+                row_data[f"中奖情况{i}"] = "未比对"
+            pred_df = pd.DataFrame([row_data])
             st.subheader(f"未来预测结果（共 {len(cands)} 注）")
             st.dataframe(pred_df, use_container_width=True)
 
@@ -313,25 +316,31 @@ with tab_predict:
         st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
         history_df = df_filtered.sort_values("date", ascending=False).head(backtest_n).reset_index(drop=True)
 
+        PRIZE_RULES = [
+            ("一等奖", lambda fc,bc: fc==5 and bc==2),
+            ("二等奖", lambda fc,bc: fc==5 and bc==1),
+            ("三等奖", lambda fc,bc: fc==5 and bc==0),
+            ("四等奖", lambda fc,bc: fc>=4 and bc==2),
+            ("五等奖", lambda fc,bc: fc>=4 and bc==1),
+            ("六等奖", lambda fc,bc: fc>=3 and bc==2),
+            ("七等奖", lambda fc,bc: fc>=4 and bc==0),
+            ("八等奖", lambda fc,bc: (fc>=3 and bc>=1) or (fc==2 and bc==2)),
+            ("九等奖", lambda fc,bc: (fc>=3) or (fc==1 and bc==2) or (fc==2 and bc==1) or (bc==2))
+        ]
         PRIZE_COLOR = {
-            "一等奖": "#ff4d4d", "二等奖": "#ff944d", "三等奖": "#ffd24d",
-            "四等奖": "#ffff4d", "五等奖": "#b3ff66", "六等奖": "#66ffb3",
-            "七等奖": "#66b3ff", "八等奖": "#b366ff", "九等奖": "#ff66f2",
-            "未中奖": "#f0f0f0"
+            "一等奖": "background-color:#ff4d4d;color:black;",
+            "二等奖": "background-color:#ff944d;color:black;",
+            "三等奖": "background-color:#ffd24d;color:black;",
+            "四等奖": "background-color:#ffff4d;color:black;",
+            "五等奖": "background-color:#b3ff66;color:black;",
+            "六等奖": "background-color:#66ffb3;color:black;",
+            "七等奖": "background-color:#66b3ff;color:black;",
+            "八等奖": "background-color:#b366ff;color:black;",
+            "九等奖": "background-color:#ff66f2;color:black;",
+            "未中奖": "background-color:#f0f0f0;color:black;"
         }
 
         def check_prize(fc, bc, win_fc, win_bc):
-            PRIZE_RULES = [
-                ("一等奖", lambda fc,bc: fc==5 and bc==2),
-                ("二等奖", lambda fc,bc: fc==5 and bc==1),
-                ("三等奖", lambda fc,bc: fc==5 and bc==0),
-                ("四等奖", lambda fc,bc: fc>=4 and bc==2),
-                ("五等奖", lambda fc,bc: fc>=4 and bc==1),
-                ("六等奖", lambda fc,bc: fc>=3 and bc==2),
-                ("七等奖", lambda fc,bc: fc>=4 and bc==0),
-                ("八等奖", lambda fc,bc: (fc>=3 and bc>=1) or (fc==2 and bc==2)),
-                ("九等奖", lambda fc,bc: (fc>=3) or (fc==1 and bc==2) or (fc==2 and bc==1) or (bc==2))
-            ]
             fc_match = len(set(fc)&set(win_fc))
             bc_match = len(set(bc)&set(win_bc))
             for name, cond in PRIZE_RULES:
@@ -339,11 +348,17 @@ with tab_predict:
                     return name
             return "未中奖"
 
-        backtest_rows = []
+        backtest_data = []
         for _, row in history_df.iterrows():
-            period_preds = genmod.gen_numbers(
+            rules_hist = predict_rules.copy()
+            rules_hist["consecutive_count"] = min_consec
+            rules_hist["odd_even_front"] = [min_odd, 5-min_odd]
+            rules_hist["front_exclude"] = exclude_front
+            rules_hist["back_exclude"] = exclude_back
+
+            gen = genmod.gen_numbers(
                 count=pred_count,
-                rules=predict_rules,
+                rules=rules_hist,
                 front_blocks=gen_front_blocks,
                 back_blocks=gen_back_blocks,
                 front_weights=gen_front_weights,
@@ -351,33 +366,25 @@ with tab_predict:
                 selected_front_blocks=pred_selected_front,
                 selected_back_blocks=pred_selected_back
             )
-            # 每期多注预测
-            pred_strs = []
-            prize_list = []
-            for p in period_preds:
-                f_str = ",".join(map(str, p["front"]))
-                b_str = ",".join(map(str, p["back"]))
-                pred_strs.append(f"前:{f_str} 后:{b_str}")
-                prize_list.append(check_prize(p["front"], p["back"], row[["f1","f2","f3","f4","f5"]], row[["b1","b2"]]))
 
-            backtest_rows.append({
+            row_data = {
                 "期号": row["issue"],
                 "历史前区": ",".join(map(str, row[["f1","f2","f3","f4","f5"]])),
-                "历史后区": ",".join(map(str, row[["b1","b2"]])),
-                **{f"预测{i+1}": pred_strs[i] if i<len(pred_strs) else "" for i in range(pred_count)},
-                **{f"中奖{i+1}": prize_list[i] if i<len(prize_list) else "" for i in range(pred_count)}
-            })
+                "历史后区": ",".join(map(str, row[["b1","b2"]]))
+            }
+            for i, c in enumerate(gen, 1):
+                row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
+                row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
+                row_data[f"中奖情况{i}"] = check_prize(c["front"], c["back"], row[["f1","f2","f3","f4","f5"]], row[["b1","b2"]])
+            backtest_data.append(row_data)
 
-        backtest_df = pd.DataFrame(backtest_rows)
+        backtest_df = pd.DataFrame(backtest_data)
 
-        def color_prize(val):
-            val = str(val)
-            for key in PRIZE_COLOR:
-                if key in val:
-                    return f"background-color: {PRIZE_COLOR[key]}; color: black"
-            return ""
+        # 样式
+        prize_cols = [col for col in backtest_df.columns if "中奖情况" in col]
+        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols), use_container_width=True)
 
-        st.dataframe(backtest_df.style.applymap(color_prize, subset=[f"中奖{i+1}" for i in range(pred_count)]), use_container_width=True)
+
 
 
 
