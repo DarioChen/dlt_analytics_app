@@ -206,7 +206,7 @@ with tab_predict:
     st.header("🔮 基于历史冷热权重的未来号码预测 & 回测")
     st.markdown(
         """
-        **预测说明**：
+        **说明**：
         - 从当前筛选后的历史数据统计出现频次
         - 区块平均出现频率映射为权重
         - 使用权重驱动 generator 生成预测号码
@@ -231,7 +231,7 @@ with tab_predict:
         use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=100)
         out_min = st.slider("权重映射最小值", 0.05, 1.0, 0.2)
         out_max = st.slider("权重映射最大值", 1.0, 3.0, 1.5)
-        pred_count = st.number_input("预测注数（count）", min_value=1, max_value=100, value=10)
+        pred_count = st.number_input("预测注数（count）", min_value=1, max_value=20, value=5)
         pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10)
@@ -297,7 +297,6 @@ with tab_predict:
             selected_front_blocks=pred_selected_front,
             selected_back_blocks=pred_selected_back
         )
-
         if not cands:
             st.warning("未生成到符合条件的号码，请调整参数重试。")
         else:
@@ -309,30 +308,17 @@ with tab_predict:
             st.subheader(f"未来预测结果（共 {len(cands)} 注）")
             st.dataframe(pred_df, use_container_width=True)
 
-            csv_bytes = pred_df.to_csv(index=False).encode("utf-8")
-            st.download_button("下载预测结果 CSV", data=csv_bytes, file_name="predictions_future.csv", mime="text/csv")
-
     # ----------------- 历史回测 -----------------
     if backtest_n > 0:
-        st.subheader(f"历史回测（最近 {backtest_n} 期）")
+        st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
         history_df = df_filtered.sort_values("date", ascending=False).head(backtest_n).reset_index(drop=True)
 
-        history_preds = []
-        for _, row in history_df.iterrows():
-            gen = genmod.gen_numbers(
-                count=1,
-                rules=predict_rules,
-                front_blocks=gen_front_blocks,
-                back_blocks=gen_back_blocks,
-                front_weights=gen_front_weights,
-                back_weights=gen_back_weights,
-                selected_front_blocks=pred_selected_front,
-                selected_back_blocks=pred_selected_back
-            )
-            if gen:
-                history_preds.append((row, gen[0]["front"], gen[0]["back"]))
-            else:
-                history_preds.append((row, [], []))
+        PRIZE_COLOR = {
+            "一等奖": "#ff4d4d", "二等奖": "#ff944d", "三等奖": "#ffd24d",
+            "四等奖": "#ffff4d", "五等奖": "#b3ff66", "六等奖": "#66ffb3",
+            "七等奖": "#66b3ff", "八等奖": "#b366ff", "九等奖": "#ff66f2",
+            "未中奖": "#f0f0f0"
+        }
 
         def check_prize(fc, bc, win_fc, win_bc):
             PRIZE_RULES = [
@@ -353,27 +339,45 @@ with tab_predict:
                     return name
             return "未中奖"
 
-        backtest_df = pd.DataFrame([{
-            "期号": row["issue"],
-            "历史前区": ",".join(map(str, row[["f1","f2","f3","f4","f5"]])),
-            "历史后区": ",".join(map(str, row[["b1","b2"]])),
-            "预测前区": ",".join(map(str, pred_f)),
-            "预测后区": ",".join(map(str, pred_b)),
-            "中奖情况": check_prize(pred_f, pred_b, row[["f1","f2","f3","f4","f5"]], row[["b1","b2"]])
-        } for row, pred_f, pred_b in history_preds])
+        backtest_rows = []
+        for _, row in history_df.iterrows():
+            period_preds = genmod.gen_numbers(
+                count=pred_count,
+                rules=predict_rules,
+                front_blocks=gen_front_blocks,
+                back_blocks=gen_back_blocks,
+                front_weights=gen_front_weights,
+                back_weights=gen_back_weights,
+                selected_front_blocks=pred_selected_front,
+                selected_back_blocks=pred_selected_back
+            )
+            # 每期多注预测
+            pred_strs = []
+            prize_list = []
+            for p in period_preds:
+                f_str = ",".join(map(str, p["front"]))
+                b_str = ",".join(map(str, p["back"]))
+                pred_strs.append(f"前:{f_str} 后:{b_str}")
+                prize_list.append(check_prize(p["front"], p["back"], row[["f1","f2","f3","f4","f5"]], row[["b1","b2"]]))
 
-        PRIZE_COLOR = {
-            "一等奖": "#ff4d4d", "二等奖": "#ff944d", "三等奖": "#ffd24d",
-            "四等奖": "#ffff4d", "五等奖": "#b3ff66", "六等奖": "#66ffb3",
-            "七等奖": "#66b3ff", "八等奖": "#b366ff", "九等奖": "#ff66f2",
-            "未中奖": "#f0f0f0"
-        }
+            backtest_rows.append({
+                "期号": row["issue"],
+                "历史前区": ",".join(map(str, row[["f1","f2","f3","f4","f5"]])),
+                "历史后区": ",".join(map(str, row[["b1","b2"]])),
+                **{f"预测{i+1}": pred_strs[i] if i<len(pred_strs) else "" for i in range(pred_count)},
+                **{f"中奖{i+1}": prize_list[i] if i<len(prize_list) else "" for i in range(pred_count)}
+            })
+
+        backtest_df = pd.DataFrame(backtest_rows)
+
         def color_prize(val):
+            val = str(val)
             for key in PRIZE_COLOR:
                 if key in val:
                     return f"background-color: {PRIZE_COLOR[key]}; color: black"
             return ""
 
-        st.dataframe(backtest_df.style.applymap(color_prize, subset=["中奖情况"]), use_container_width=True)
+        st.dataframe(backtest_df.style.applymap(color_prize, subset=[f"中奖{i+1}" for i in range(pred_count)]), use_container_width=True)
+
 
 
