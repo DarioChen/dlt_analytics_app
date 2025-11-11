@@ -12,7 +12,7 @@ def compute_weights_from_history_ewma(
     back_range=range(1,13),
     out_min: float = 0.2,
     out_max: float = 1.5,
-    span: int = 0.001  # EWMA span，越小越重视近期
+    span: int = 5  # EWMA span
 ):
     """
     使用 EWMA 计算前区/后区区块权重
@@ -22,21 +22,18 @@ def compute_weights_from_history_ewma(
     else:
         df_use = df.sort_values("date", ascending=True)
 
-    # 初始化每期每个号码的出现矩阵
     front_cols = ["f1","f2","f3","f4","f5"]
     back_cols = ["b1","b2"]
 
-    # 构建前区每期出现次数
     front_hist = pd.DataFrame([{num: 1 if num in row[front_cols].values else 0 for num in front_range}
                                for _, row in df_use.iterrows()])
     back_hist = pd.DataFrame([{num: 1 if num in row[back_cols].values else 0 for num in back_range}
                               for _, row in df_use.iterrows()])
 
-    # 计算 EWMA
+    # EWMA
     front_ewma = front_hist.ewm(span=span, adjust=False).mean().iloc[-1].to_dict()
     back_ewma = back_hist.ewm(span=span, adjust=False).mean().iloc[-1].to_dict()
 
-    # 区块平均权重
     front_block_avg = block_average_freq(front_blocks, front_ewma)
     back_block_avg = block_average_freq(back_blocks, back_ewma)
 

@@ -238,6 +238,7 @@ with tab_predict:
         exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
         exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
+        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
     with col2:
         st.markdown("""
         **说明**：
@@ -248,12 +249,12 @@ with tab_predict:
     # ----------------- 计算区块权重 -----------------
     front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history_ewma(
         df_filtered,
-        front_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(front_labels, front_bins)},
-        back_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(back_labels, back_bins)},
+        front_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)},
+        back_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)},
         recent_n=use_recent_n,
         out_min=0.2,
         out_max=1.5,
-        span=5
+        span=span
     )
 
     # ----------------- 排除高频号码 -----------------
