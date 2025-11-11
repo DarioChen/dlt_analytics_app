@@ -127,20 +127,23 @@ with tab_generate:
     back_weights = {label:cols[i].slider(label,0.0,1.0,0.5,0.01) for i,label in enumerate(back_labels)}
 
     st.subheader("高级规则")
-    colA,colB,colC = st.columns(3)
+    colA, colB, colC = st.columns(3)
     with colA:
-        sum_min = st.number_input("前区和值最小",0,200,70)
-        sum_max = st.number_input("前区和值最大",0,200,140)
-        odd_count = st.number_input("前区最小奇数个数",0,5,3)
+        sum_min = st.number_input("前区和值最小", 0, 200, 70)
+        sum_max = st.number_input("前区和值最大", 0, 200, 140)
+        odd_count = st.number_input("前区最小奇数个数", 0, 5, 3)
+        top_n_blocks = st.number_input("前区仅使用前 N 权重区块", 1, len(front_labels), len(front_labels))
+        max_per_block = st.number_input("每个区块最多选号码", 1, 5, 2)
+        random_blocks_count = st.number_input("每期随机选区块数量", 1, len(front_labels), min(3, len(front_labels)))
     with colB:
-        front_include = st.text_input("前区必含(逗号分隔)","")
-        front_exclude = st.text_input("前区排除(逗号分隔)","")
-        consecutive_count = st.number_input("前区连号数量(对数)",0,5,0)
-        cons_mode_label = st.selectbox("连号匹配方式",["等于","至少"])
-        consecutive_mode = "exact" if cons_mode_label=="等于" else "min"
+        front_include = st.text_input("前区必含(逗号分隔)", "")
+        front_exclude = st.text_input("前区排除(逗号分隔)", "")
+        consecutive_count = st.number_input("前区连号数量(对数)", 0, 5, 0)
+        cons_mode_label = st.selectbox("连号匹配方式", ["等于", "至少"])
+        consecutive_mode = "exact" if cons_mode_label == "等于" else "min"
     with colC:
-        back_include = st.text_input("后区必含(逗号分隔)","")
-        back_exclude = st.text_input("后区排除(逗号分隔)","")
+        back_include = st.text_input("后区必含(逗号分隔)", "")
+        back_exclude = st.text_input("后区排除(逗号分隔)", "")
 
     max_gen = st.number_input("生成注数上限",1,100,5)
 
@@ -148,15 +151,19 @@ with tab_generate:
         s = s.replace("，",",")
         return [int(x.strip()) for x in s.split(",") if x.strip().isdigit()]
 
+
     rules = {
-        "sum_front_range":[sum_min,sum_max],
-        "odd_even_front":[odd_count,5-odd_count],
-        "front_include":parse_nums(front_include),
-        "front_exclude":parse_nums(front_exclude),
-        "back_include":parse_nums(back_include),
-        "back_exclude":parse_nums(back_exclude),
-        "consecutive_count":consecutive_count,
-        "consecutive_mode":consecutive_mode
+        "sum_front_range": [sum_min, sum_max],
+        "odd_even_front": [odd_count, 5 - odd_count],
+        "front_include": parse_nums(front_include),
+        "front_exclude": parse_nums(front_exclude),
+        "back_include": parse_nums(back_include),
+        "back_exclude": parse_nums(back_exclude),
+        "consecutive_count": consecutive_count,
+        "consecutive_mode": consecutive_mode,
+        "top_n_blocks": top_n_blocks,
+        "max_per_block": max_per_block,
+        "random_blocks_count": random_blocks_count
     }
 
     st.subheader("🎯 中奖号码比对")
@@ -234,11 +241,18 @@ with tab_predict:
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
         min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0, key="tab4_min_consec")
         min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=0, key="tab4_min_odd")
+
+        top_n_blocks_future = st.number_input("前区仅使用前 N 权重区块", 1, len(front_labels), len(front_labels),
+                                              key="tab4_top_n_blocks")
+        max_per_block_future = st.number_input("每个区块最多选号码", 1, 5, 2, key="tab4_max_per_block")
         exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False, key="tab4_exclude_top_n")
         exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
         exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
         span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
+        random_blocks_count_future = st.number_input("每期随机选区块数量", 1, len(front_labels),
+                                                     min(3, len(front_labels)), key="tab4_random_blocks_count")
+
     with col2:
         st.markdown("""
         **说明**：
@@ -282,9 +296,12 @@ with tab_predict:
     if st.button("生成未来预测号码", key="tab4_gen_future"):
         rules_future = predict_rules.copy()
         rules_future["consecutive_count"] = min_consec
-        rules_future["odd_even_front"] = [min_odd, 5-min_odd]
+        rules_future["odd_even_front"] = [min_odd, 5 - min_odd]
         rules_future["front_exclude"] = exclude_front
         rules_future["back_exclude"] = exclude_back
+        rules_future["top_n_blocks"] = top_n_blocks_future
+        rules_future["max_per_block"] = max_per_block_future
+        rules_future["random_blocks_count"] = random_blocks_count_future
 
         cands = genmod.gen_numbers(
             count=pred_count,

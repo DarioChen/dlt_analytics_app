@@ -1,3 +1,4 @@
+# generator.py v1.7 (随机挑选区块)
 from typing import List, Dict, Optional
 import random
 
@@ -31,58 +32,69 @@ def gen_numbers(
     back_include = set(rules.get("back_include", []))
     back_exclude = set(rules.get("back_exclude", []))
 
+    # 新增参数
+    top_n_blocks = rules.get("top_n_blocks", len(selected_front_blocks))
+    max_per_block = rules.get("max_per_block", 2)
+    random_blocks_count = rules.get("random_blocks_count", 3)  # 每期随机选择几个区块
+
     max_tries = 10000
     tries = 0
 
     while len(results) < count and tries < max_tries:
         tries += 1
+
         # ----------------- 生成前区号码 -----------------
-        front_pool = []
-        for block in selected_front_blocks:
-            nums = [n for n in front_blocks[block] if n not in front_exclude]
-            front_pool.extend(nums)
-        if len(front_pool) < 5:
+        if not selected_front_blocks:
             continue
 
-        # 按权重逐一选号
-        f_selected = []
-        pool_copy = front_pool.copy()
-        block_weights = {b: front_weights[b] for b in selected_front_blocks}
-        total_weight = sum(block_weights.values())
-        for _ in range(5):
-            # 按权重选择区块
-            chosen_block = rng.choices(list(block_weights.keys()),
-                                       weights=[block_weights[b]/total_weight for b in block_weights], k=1)[0]
-            # 从区块剩余号码中随机取一个
-            candidates = [n for n in front_blocks[chosen_block] if n not in f_selected and n not in front_exclude]
-            if not candidates:
-                continue
-            pick = rng.choice(candidates)
-            f_selected.append(pick)
+        # 选 top N 权重区块
+        top_blocks = sorted(selected_front_blocks, key=lambda b: front_weights.get(b,1.0), reverse=True)[:top_n_blocks]
 
+        # 每期随机挑选 random_blocks_count 个区块
+        num_blocks_to_use = min(random_blocks_count, len(top_blocks))
+        blocks_this_round = rng.sample(top_blocks, num_blocks_to_use)
+
+        pool_per_block = {b: [n for n in front_blocks[b] if n not in front_exclude] for b in blocks_this_round}
+        f_selected: List[int] = []
+
+        while len(f_selected) < 5:
+            for block in blocks_this_round:
+                available = [n for n in pool_per_block[block] if n not in f_selected]
+                already_in_block = sum(1 for x in f_selected if x in front_blocks[block])
+                take = min(max_per_block - already_in_block, len(available))
+                if take > 0:
+                    picks = rng.sample(available, take)
+                    f_selected.extend(picks)
+                if len(f_selected) >= 5:
+                    break
+
+            # 如果所有区块都满了但总数不够，跳出避免死循环
+            if all(sum(1 for x in f_selected if x in front_blocks[b]) >= max_per_block for b in blocks_this_round):
+                break
+
+        if len(f_selected) < 5:
+            continue
+
+        f_selected = f_selected[:5]
         f_selected.sort()
 
         # ----------------- 生成后区号码 -----------------
-        back_pool = []
-        for block in selected_back_blocks:
-            nums = [n for n in back_blocks[block] if n not in back_exclude]
-            back_pool.extend(nums)
-        if len(back_pool) < 2:
+        if not selected_back_blocks:
             continue
 
-        b_selected = []
-        pool_copy = back_pool.copy()
-        block_weights = {b: back_weights[b] for b in selected_back_blocks}
-        total_weight = sum(block_weights.values())
-        for _ in range(2):
-            chosen_block = rng.choices(list(block_weights.keys()),
-                                       weights=[block_weights[b]/total_weight for b in block_weights], k=1)[0]
-            candidates = [n for n in back_blocks[chosen_block] if n not in b_selected and n not in back_exclude]
-            if not candidates:
-                continue
-            pick = rng.choice(candidates)
-            b_selected.append(pick)
+        pool_per_block_back = {b: [n for n in back_blocks[b] if n not in back_exclude] for b in selected_back_blocks}
+        b_selected: List[int] = []
 
+        while len(b_selected) < 2:
+            for block in selected_back_blocks:
+                available = [n for n in pool_per_block_back[block] if n not in b_selected]
+                if available:
+                    pick = rng.choice(available)
+                    b_selected.append(pick)
+                if len(b_selected) >= 2:
+                    break
+
+        b_selected = b_selected[:2]
         b_selected.sort()
 
         # ----------------- 检查条件 -----------------
