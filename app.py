@@ -6,7 +6,7 @@ from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv
 from backend.analysis import dataframe_from_draws
 from backend import generator as genmod
-from predictor import compute_weights_from_history, prepare_generator_inputs
+from predictor import compute_weights_from_history, prepare_generator_inputs, compute_weights_from_history_ewma
 import random
 import io
 
@@ -246,13 +246,14 @@ with tab_predict:
         """)
 
     # ----------------- 计算区块权重 -----------------
-    front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history(
+    front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history_ewma(
         df_filtered,
         front_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(front_labels, front_bins)},
         back_blocks={label: list(range(lo, hi+1)) for label, (lo,hi) in zip(back_labels, back_bins)},
         recent_n=use_recent_n,
         out_min=0.2,
-        out_max=1.5
+        out_max=1.5,
+        span=5
     )
 
     # ----------------- 排除高频号码 -----------------
