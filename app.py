@@ -235,12 +235,12 @@ with tab_predict:
 
     col1, col2 = st.columns([2,1])
     with col1:
-        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=100, key="tab4_recent_n")
+        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=5, key="tab4_recent_n")
         pred_count = st.number_input("每期预测注数", min_value=1, max_value=20, value=5, key="tab4_pred_count")
         pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
         min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0, key="tab4_min_consec")
-        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=0, key="tab4_min_odd")
+        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=2, key="tab4_min_odd")
 
         top_n_blocks_future = st.number_input("前区仅使用前 N 权重区块", 1, len(front_labels), len(front_labels),
                                               key="tab4_top_n_blocks")
@@ -249,7 +249,7 @@ with tab_predict:
         exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
         exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
-        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
+        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=2, key="tab4_span")
         random_blocks_count_future = st.number_input("每期随机选区块数量", 1, len(front_labels),
                                                      min(3, len(front_labels)), key="tab4_random_blocks_count")
 
