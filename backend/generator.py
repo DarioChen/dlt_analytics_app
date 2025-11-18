@@ -79,22 +79,26 @@ def gen_numbers(
         f_selected.sort()
 
         # ----------------- 生成后区号码 -----------------
-        if not selected_back_blocks:
+        back_pool = []
+        for block in selected_back_blocks:
+            nums = [n for n in back_blocks[block] if n not in back_exclude]
+            back_pool.extend(nums)
+        if len(back_pool) < 2:
             continue
 
-        pool_per_block_back = {b: [n for n in back_blocks[b] if n not in back_exclude] for b in selected_back_blocks}
-        b_selected: List[int] = []
+        b_selected = []
+        pool_copy = back_pool.copy()
+        block_weights = {b: back_weights[b] for b in selected_back_blocks}
+        total_weight = sum(block_weights.values())
+        for _ in range(2):
+            chosen_block = rng.choices(list(block_weights.keys()),
+                                       weights=[block_weights[b] / total_weight for b in block_weights], k=1)[0]
+            candidates = [n for n in back_blocks[chosen_block] if n not in b_selected and n not in back_exclude]
+            if not candidates:
+                continue
+            pick = rng.choice(candidates)
+            b_selected.append(pick)
 
-        while len(b_selected) < 2:
-            for block in selected_back_blocks:
-                available = [n for n in pool_per_block_back[block] if n not in b_selected]
-                if available:
-                    pick = rng.choice(available)
-                    b_selected.append(pick)
-                if len(b_selected) >= 2:
-                    break
-
-        b_selected = b_selected[:2]
         b_selected.sort()
 
         # ----------------- 检查条件 -----------------
