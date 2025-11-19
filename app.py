@@ -321,14 +321,19 @@ with tab_predict:
             st.warning("未生成到符合条件的号码，请调整参数重试。")
         else:
             # 每注一列显示
-            row_data = {}
+            rows = []
             for i, c in enumerate(cands, 1):
-                row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
-                row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
-                row_data[f"中奖情况{i}"] = "未比对"
-            pred_df = pd.DataFrame([row_data])
+                rows.append({
+                    "预测序号": i,
+                    "预测前区": ",".join(map(str, c["front"])),
+                    "预测后区": ",".join(map(str, c["back"])),
+                    "中奖情况": "未比对"
+                })
+
+            pred_df = pd.DataFrame(rows)
+
             st.subheader(f"未来预测结果（共 {len(cands)} 注）")
-            st.dataframe(pred_df, use_container_width=True)
+            st.dataframe(pred_df, use_container_width=False)
 
     # ----------------- 历史回测 -----------------
     if backtest_n > 0:
@@ -401,7 +406,7 @@ with tab_predict:
 
         # 样式
         prize_cols = [col for col in backtest_df.columns if "中奖情况" in col]
-        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols), use_container_width=True)
+        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols), use_container_width=False)
 
 
 
