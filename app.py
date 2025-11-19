@@ -238,21 +238,21 @@ with tab_predict:
 
     col1, col2 = st.columns([2,1])
     with col1:
-        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=5, key="tab4_recent_n")
+        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=2, key="tab4_recent_n")
         pred_count = st.number_input("每期预测注数", min_value=1, max_value=20, value=5, key="tab4_pred_count")
         pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
         pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
-        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=0, key="tab4_min_consec")
+        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=1, key="tab4_min_consec")
         min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=2, key="tab4_min_odd")
 
-        top_n_blocks_future = st.number_input("前区仅使用前 N 权重区块", 1, len(front_labels), len(front_labels),
+        top_n_blocks_future = st.number_input("前区仅使用前 N 权重区块", min_value=3, max_value=7, value=4,
                                               key="tab4_top_n_blocks")
         max_per_block_future = st.number_input("每个区块最多选号码", 1, 5, 2, key="tab4_max_per_block")
         exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False, key="tab4_exclude_top_n")
-        exclude_top_front_n = st.number_input("前区排除数量", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
-        exclude_top_back_n = st.number_input("后区排除数量", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
+        exclude_top_front_n = st.number_input("前区排除次数最多的N个号码", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
+        exclude_top_back_n = st.number_input("后区排除次数最多的N个号码", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
         backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
-        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=2, key="tab4_span")
+        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
         random_blocks_count_future = st.number_input("每期随机选区块数量", 1, len(front_labels),
                                                      min(3, len(front_labels)), key="tab4_random_blocks_count")
 
@@ -372,41 +372,89 @@ with tab_predict:
                     return name
             return "未中奖"
 
+
         backtest_data = []
-        for _, row in history_df.iterrows():
-            rules_hist = predict_rules.copy()
-            rules_hist["consecutive_count"] = min_consec
-            rules_hist["odd_even_front"] = [min_odd, 5-min_odd]
-            rules_hist["front_exclude"] = exclude_front
-            rules_hist["back_exclude"] = exclude_back
+        for idx, row in history_df.iterrows():
+            # 每一期都重新计算前N期的权重
+            if use_recent_n > 0:
+                recent_window = df_filtered[df_filtered['date'] <= row['date']].sort_values('date',
+                                                                                            ascending=True).tail(
+                    use_recent_n)
+            else:
+                recent_window = df_filtered[df_filtered['date'] <= row['date']].sort_values('date', ascending=True)
+
+            front_block_weights_dyn, back_block_weights_dyn, front_freq_map_dyn, back_freq_map_dyn = compute_weights_from_history_ewma(
+                recent_window,
+                front_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)},
+                back_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)},
+                recent_n=0,  # 已经在 recent_window 里选好了 N 期
+                out_min=0.2,
+                out_max=1.5,
+                span=span
+            )
+
+            # 排除高频号码（每期动态）
+            exclude_front_dyn = []
+            exclude_back_dyn = []
+            if exclude_top_n:
+                top_front = sorted(front_freq_map_dyn.items(), key=lambda x: -x[1])[:exclude_top_front_n]
+                top_back = sorted(back_freq_map_dyn.items(), key=lambda x: -x[1])[:exclude_top_back_n]
+                exclude_front_dyn = [n for n, _ in top_front]
+                exclude_back_dyn = [n for n, _ in top_back]
+
+            # 准备 generator 输入
+            gen_front_blocks_dyn, gen_back_blocks_dyn, gen_front_weights_dyn, gen_back_weights_dyn = prepare_generator_inputs(
+                front_blocks_labels=front_labels,
+                front_bins=front_bins,
+                back_blocks_labels=back_labels,
+                back_bins=back_bins,
+                selected_front_blocks=pred_selected_front,
+                selected_back_blocks=pred_selected_back,
+                block_front_weights=front_block_weights_dyn,
+                block_back_weights=back_block_weights_dyn
+            )
+
+            # 生成号码
+            rules_hist_dyn = predict_rules.copy()
+            rules_hist_dyn.update({
+                "consecutive_count": min_consec,
+                "odd_even_front": [min_odd, 5 - min_odd],
+                "front_exclude": exclude_front_dyn,
+                "back_exclude": exclude_back_dyn,
+                "top_n_blocks": top_n_blocks_future,
+                "max_per_block": max_per_block_future,
+                "random_blocks_count": random_blocks_count_future
+            })
 
             gen = genmod.gen_numbers(
                 count=pred_count,
-                rules=rules_hist,
-                front_blocks=gen_front_blocks,
-                back_blocks=gen_back_blocks,
-                front_weights=gen_front_weights,
-                back_weights=gen_back_weights,
+                rules=rules_hist_dyn,
+                front_blocks=gen_front_blocks_dyn,
+                back_blocks=gen_back_blocks_dyn,
+                front_weights=gen_front_weights_dyn,
+                back_weights=gen_back_weights_dyn,
                 selected_front_blocks=pred_selected_front,
                 selected_back_blocks=pred_selected_back
             )
 
             row_data = {
                 "期号": row["issue"],
-                "历史前区": ",".join(map(str, row[["f1","f2","f3","f4","f5"]])),
-                "历史后区": ",".join(map(str, row[["b1","b2"]]))
+                "历史前区": ",".join(map(str, row[["f1", "f2", "f3", "f4", "f5"]])),
+                "历史后区": ",".join(map(str, row[["b1", "b2"]]))
             }
             for i, c in enumerate(gen, 1):
                 row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
                 row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
-                row_data[f"中奖情况{i}"] = check_prize(c["front"], c["back"], row[["f1","f2","f3","f4","f5"]], row[["b1","b2"]])
+                row_data[f"中奖情况{i}"] = check_prize(c["front"], c["back"], row[["f1", "f2", "f3", "f4", "f5"]],
+                                                       row[["b1", "b2"]])
             backtest_data.append(row_data)
 
         backtest_df = pd.DataFrame(backtest_data)
 
         # 样式
         prize_cols = [col for col in backtest_df.columns if "中奖情况" in col]
-        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols), use_container_width=False)
+        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols),
+                     use_container_width=False)
 
 
 
