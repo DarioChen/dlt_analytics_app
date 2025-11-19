@@ -3,6 +3,47 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
 
+def compute_weights_from_history_ewma(
+    df,
+    front_blocks: Dict[str, List[int]],
+    back_blocks: Dict[str, List[int]],
+    recent_n: int = 0,
+    front_range=range(1,36),
+    back_range=range(1,13),
+    out_min: float = 0.2,
+    out_max: float = 1.5,
+    span: int = 5  # EWMA span
+):
+    """
+    使用 EWMA 计算前区/后区区块权重
+    """
+    if recent_n and recent_n > 0:
+        df_use = df.sort_values("date", ascending=True).tail(recent_n)
+    else:
+        df_use = df.sort_values("date", ascending=True)
+
+    front_cols = ["f1","f2","f3","f4","f5"]
+    back_cols = ["b1","b2"]
+
+    front_hist = pd.DataFrame([{num: 1 if num in row[front_cols].values else 0 for num in front_range}
+                               for _, row in df_use.iterrows()])
+    back_hist = pd.DataFrame([{num: 1 if num in row[back_cols].values else 0 for num in back_range}
+                              for _, row in df_use.iterrows()])
+
+    # EWMA
+    front_ewma = front_hist.ewm(span=span, adjust=False).mean().iloc[-1].to_dict()
+    back_ewma = back_hist.ewm(span=span, adjust=False).mean().iloc[-1].to_dict()
+
+    front_block_avg = block_average_freq(front_blocks, front_ewma)
+    back_block_avg = block_average_freq(back_blocks, back_ewma)
+
+    front_block_weights = normalize_block_weights(front_block_avg, out_min, out_max)
+    back_block_weights = normalize_block_weights(back_block_avg, out_min, out_max)
+
+    return front_block_weights, back_block_weights, front_ewma, back_ewma
+
+
+
 def number_frequencies(df: pd.DataFrame, front_range=range(1,36), back_range=range(1,13)) -> Tuple[Dict[int,int], Dict[int,int]]:
     """
     统计历史出现次数（在 df 中，列名 f1..f5, b1..b2）
