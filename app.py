@@ -147,6 +147,13 @@ with tab_generate:
     with colC:
         back_include = st.text_input("后区必含(逗号分隔)", "")
         back_exclude = st.text_input("后区排除(逗号分隔)", "")
+        random_back_blocks_count = st.number_input(
+            "每期随机选后区区块数量",
+            1,
+            len(back_labels),
+            min(2, len(back_labels)),
+            key="gen_back_random_blocks",
+        )
 
     max_gen = st.number_input("生成注数上限",1,100,5)
 
@@ -166,7 +173,8 @@ with tab_generate:
         "consecutive_mode": consecutive_mode,
         "top_n_blocks": top_n_blocks,
         "max_per_block": max_per_block,
-        "random_blocks_count": random_blocks_count
+        "random_blocks_count": random_blocks_count,
+        "random_back_blocks_count": random_back_blocks_count
     }
 
     st.subheader("🎯 中奖号码比对")
@@ -255,6 +263,13 @@ with tab_predict:
         span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
         random_blocks_count_future = st.number_input("每期随机选区块数量", 1, len(front_labels),
                                                      min(3, len(front_labels)), key="tab4_random_blocks_count")
+        random_back_blocks_count_future = st.number_input(
+            "每期随机选后区区块数量",
+            1,
+            len(back_labels),
+            min(2, len(back_labels)),
+            key="tab4_random_back_blocks_count"
+        )
 
     with col2:
         st.markdown("""
@@ -305,6 +320,7 @@ with tab_predict:
         rules_future["top_n_blocks"] = top_n_blocks_future
         rules_future["max_per_block"] = max_per_block_future
         rules_future["random_blocks_count"] = random_blocks_count_future
+        rules_future["random_back_blocks_count"] = random_back_blocks_count_future
 
         cands = genmod.gen_numbers(
             count=pred_count,
@@ -423,7 +439,8 @@ with tab_predict:
                 "back_exclude": exclude_back_dyn,
                 "top_n_blocks": top_n_blocks_future,
                 "max_per_block": max_per_block_future,
-                "random_blocks_count": random_blocks_count_future
+                "random_blocks_count": random_blocks_count_future,
+                "random_back_blocks_count": random_back_blocks_count_future
             })
 
             gen = genmod.gen_numbers(

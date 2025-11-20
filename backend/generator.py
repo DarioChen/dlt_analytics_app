@@ -33,9 +33,15 @@ def gen_numbers(
     back_exclude = set(rules.get("back_exclude", []))
 
     # 新增参数
-    top_n_blocks = rules.get("top_n_blocks", len(selected_front_blocks))
+    selected_front_blocks = selected_front_blocks or []
+    selected_back_blocks = selected_back_blocks or []
+    front_block_total = len(selected_front_blocks) if selected_front_blocks else len(front_blocks or {})
+    back_block_total = len(selected_back_blocks) if selected_back_blocks else len(back_blocks or {})
+
+    top_n_blocks = rules.get("top_n_blocks", front_block_total if front_block_total > 0 else 0)
     max_per_block = rules.get("max_per_block", 2)
     random_blocks_count = rules.get("random_blocks_count", 3)  # 每期随机选择几个区块
+    random_back_blocks_count = rules.get("random_back_blocks_count", back_block_total if back_block_total > 0 else 0)
 
     max_tries = 10000
     tries = 0
@@ -79,20 +85,34 @@ def gen_numbers(
         f_selected.sort()
 
         # ----------------- 生成后区号码 -----------------
+        if not selected_back_blocks:
+            continue
+
+        if random_back_blocks_count and random_back_blocks_count > 0:
+            num_back_blocks = min(random_back_blocks_count, len(selected_back_blocks))
+            back_blocks_this_round = rng.sample(selected_back_blocks, num_back_blocks)
+        else:
+            back_blocks_this_round = selected_back_blocks[:]
+
         back_pool = []
-        for block in selected_back_blocks:
+        for block in back_blocks_this_round:
             nums = [n for n in back_blocks[block] if n not in back_exclude]
             back_pool.extend(nums)
         if len(back_pool) < 2:
             continue
 
         b_selected = []
-        pool_copy = back_pool.copy()
-        block_weights = {b: back_weights[b] for b in selected_back_blocks}
-        total_weight = sum(block_weights.values())
-        for _ in range(2):
-            chosen_block = rng.choices(list(block_weights.keys()),
-                                       weights=[block_weights[b] / total_weight for b in block_weights], k=1)[0]
+        block_weights = {b: back_weights.get(b, 1.0) for b in back_blocks_this_round}
+        total_weight = sum(block_weights.values()) or len(block_weights)
+
+        attempts = 0
+        while len(b_selected) < 2 and attempts < 20:
+            attempts += 1
+            chosen_block = rng.choices(
+                population=list(block_weights.keys()),
+                weights=[block_weights[b] / total_weight for b in block_weights],
+                k=1
+            )[0]
             candidates = [n for n in back_blocks[chosen_block] if n not in b_selected and n not in back_exclude]
             if not candidates:
                 continue
@@ -100,6 +120,8 @@ def gen_numbers(
             b_selected.append(pick)
 
         b_selected.sort()
+        if len(b_selected) < 2:
+            continue
 
         # ----------------- 检查条件 -----------------
         ok = True
