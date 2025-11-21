@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import random
 from backend.db import init_db, session_scope, Draw
-from backend.sync import import_csv
+from backend.sync import import_csv, sync_remote_history
 from backend.analysis import dataframe_from_draws
 from backend import generator as genmod
 from predictor import compute_weights_from_history, prepare_generator_inputs, compute_weights_from_history_ewma
@@ -157,6 +157,53 @@ with tab_data:
 
     st.subheader(f"数据表（共 {len(df_filtered)} 条）")
     st.dataframe(df_filtered.head(200), use_container_width=True)
+
+    st.subheader("在线同步（官方接口）")
+    source_label = st.selectbox(
+        "数据来源",
+        options=[
+            ("sporttery", "中国体彩-竞彩网接口（JSON）"),
+            ("lottery", "中国体彩网官网列表（HTML）")
+        ],
+        format_func=lambda x: x[1],
+        key="sync_source"
+    )
+    sync_source_value = source_label[0]
+    max_pages_sync = st.number_input(
+        "抓取页数",
+        1,
+        200 if sync_source_value == "sporttery" else 50,
+        20 if sync_source_value == "sporttery" else 5,
+        key="sync_max_pages"
+    )
+    proxy_url = st.text_input("HTTP/HTTPS 代理地址（可选）", "", key="sync_proxy")
+    disable_ssl_verify = st.checkbox("忽略 SSL 证书校验", value=False, key="sync_disable_ssl")
+    timeout_sync = st.number_input("请求超时时间（秒）", 5, 60, 15, key="sync_timeout")
+    if st.button("从官网同步最新开奖", key="sync_remote"):
+        proxies = None
+        proxy_url_clean = proxy_url.strip()
+        if proxy_url_clean:
+            proxies = {"http": proxy_url_clean, "https": proxy_url_clean}
+        verify_flag = not disable_ssl_verify
+        with st.spinner("正在抓取开奖数据..."):
+            try:
+                result = sync_remote_history(
+                    max_pages=int(max_pages_sync),
+                    proxies=proxies,
+                    verify=verify_flag,
+                    timeout=int(timeout_sync),
+                    source=sync_source_value
+                )
+            except Exception as e:
+                st.error(f"同步失败：{e}")
+            else:
+                msg = f"新增 {result['new']} 条, 重复 {result['dup']} 条"
+                if result["errors"]:
+                    st.warning(msg + f"，有 {len(result['errors'])} 条错误")
+                    st.write(result["errors"])
+                else:
+                    st.success(msg)
+                st.rerun()
 
 # --------------------- Tab2: 数据图表 ---------------------
 with tab_chart:

@@ -1,6 +1,8 @@
 # backend/sync.py
 import pandas as pd
+from datetime import datetime
 from backend.db import session_scope, Draw
+from backend import dlt
 
 def import_csv(file) -> dict:
     """
@@ -43,4 +45,69 @@ def import_csv(file) -> dict:
             except Exception as e:
                 errors.append(f"第{i+1}行错误: {e}")
 
+    return {"new": n_new, "dup": n_dup, "errors": errors}
+
+def sync_remote_history(
+    max_pages:int=50,
+    proxies=None,
+    verify:bool=True,
+    timeout:int=15,
+    source:str="sporttery"
+) -> dict:
+    """
+    通过 dlt 接口抓取历史开奖并写入数据库
+    """
+    n_new = 0
+    n_dup = 0
+    errors = []
+
+    with session_scope() as s:
+        existing_issues = {issue for (issue,) in s.query(Draw.issue)}
+        if source == "lottery":
+            iterator = dlt.iter_lottery_gov_history(
+                max_pages=max_pages,
+                proxies=proxies,
+                verify=verify,
+                timeout=timeout
+            )
+            needs_normalize = False
+        else:
+            iterator = dlt.iter_history(
+                max_pages=max_pages,
+                proxies=proxies,
+                verify=verify,
+                timeout=timeout
+            )
+            needs_normalize = True
+
+        for raw in iterator:
+            if needs_normalize:
+                normalized = dlt.normalize_row(raw)
+            else:
+                normalized = raw
+            if not normalized:
+                continue
+            issue = normalized["issue"]
+            if issue in existing_issues:
+                n_dup += 1
+                continue
+            try:
+                d = Draw(
+                    issue=issue,
+                    date=datetime.fromisoformat(normalized["date"]),
+                    f1=normalized["f1"],
+                    f2=normalized["f2"],
+                    f3=normalized["f3"],
+                    f4=normalized["f4"],
+                    f5=normalized["f5"],
+                    b1=normalized["b1"],
+                    b2=normalized["b2"],
+                    sales=normalized.get("sales"),
+                    pool=normalized.get("pool"),
+                )
+                s.add(d)
+                existing_issues.add(issue)
+                n_new += 1
+            except Exception as e:
+                errors.append(f"{issue}: {e}")
     return {"new": n_new, "dup": n_dup, "errors": errors}
