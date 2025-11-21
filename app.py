@@ -407,6 +407,32 @@ with tab_predict:
         )
         backtest_n = st.number_input("回测历史期数（0=不回测）", 0, 500, 10, key="tab4_backtest_n")
         st.caption("建议调小 N 和区块数量以提升生成速度。")
+    with st.expander("💰 成本与奖金参数", expanded=False):
+        ticket_cost = st.number_input("单注投注金额（元）", 1.0, 20.0, 3.0, 0.5, key="tab4_ticket_cost")
+        st.caption("大乐透普通投注为 3 元/注，根据实际玩法调整。")
+        PRIZE_PAYOUT_DEFAULT = {
+            "一等奖": 5000000.0,
+            "二等奖": 1500000.0,
+            "三等奖": 10000.0,
+            "四等奖": 3000.0,
+            "五等奖": 300.0,
+            "六等奖": 200.0,
+            "七等奖": 100.0,
+            "八等奖": 15.0,
+            "九等奖": 5.0
+        }
+        prize_amounts = {}
+        prize_cols = st.columns(3)
+        for idx, (name, default_val) in enumerate(PRIZE_PAYOUT_DEFAULT.items()):
+            with prize_cols[idx % 3]:
+                prize_amounts[name] = st.number_input(
+                    f"{name}估值（元）",
+                    0.0,
+                    10000000.0,
+                    default_val,
+                    10.0,
+                    key=f"prize_amount_{name}"
+                )
 
     # ----------------- 基线历史窗口 & 生成上下文 -----------------
     recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
@@ -510,6 +536,9 @@ with tab_predict:
 
 
         backtest_data = []
+        total_cost_all = 0.0
+        total_return_all = 0.0
+        total_bets_all = 0
         for idx, row in history_df.iterrows():
             # 每一期都重新计算前N期的权重
             recent_window_dyn = build_history_window(
@@ -565,19 +594,51 @@ with tab_predict:
                 "历史前区": ",".join(map(str, row[["f1", "f2", "f3", "f4", "f5"]])),
                 "历史后区": ",".join(map(str, row[["b1", "b2"]]))
             }
+            row_bets = len(gen)
+            row_cost = row_bets * ticket_cost
+            row_return = 0.0
             for i, c in enumerate(gen, 1):
                 row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
                 row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
-                row_data[f"中奖情况{i}"] = check_prize(c["front"], c["back"], row[["f1", "f2", "f3", "f4", "f5"]],
-                                                       row[["b1", "b2"]])
+                prize_name = check_prize(
+                    c["front"],
+                    c["back"],
+                    row[["f1", "f2", "f3", "f4", "f5"]],
+                    row[["b1", "b2"]]
+                )
+                row_data[f"中奖情况{i}"] = prize_name
+                row_return += prize_amounts.get(prize_name, 0.0)
+            row_data["投注注数"] = row_bets
+            row_data["投入(元)"] = row_cost
+            row_data["回收(元)"] = row_return
+            row_data["收益(元)"] = row_return - row_cost
+            total_cost_all += row_cost
+            total_return_all += row_return
+            total_bets_all += row_bets
             backtest_data.append(row_data)
 
         backtest_df = pd.DataFrame(backtest_data)
 
         # 样式
         prize_cols = [col for col in backtest_df.columns if "中奖情况" in col]
-        st.dataframe(backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols),
-                     use_container_width=False)
+        st.dataframe(
+            backtest_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols),
+            use_container_width=False
+        )
+
+        summary_cols = st.columns(3)
+        summary_cols[0].metric("累计投入", f"{total_cost_all:.0f} 元", delta=None)
+        summary_cols[1].metric(
+            "累计回收",
+            f"{total_return_all:.0f} 元",
+            delta=f"{(total_return_all - total_cost_all):.0f} 元"
+        )
+        roi = (total_return_all - total_cost_all) / total_cost_all if total_cost_all > 0 else 0.0
+        summary_cols[2].metric(
+            "ROI",
+            f"{roi*100:.1f}%",
+            delta=f"共 {total_bets_all} 注"
+        )
 
 
 
