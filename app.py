@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import random
+import math
 from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv, sync_remote_history
 from backend.analysis import dataframe_from_draws
@@ -155,8 +156,18 @@ with tab_data:
         except Exception as e:
             st.error(f"导入失败：{e}")
 
-    st.subheader(f"数据表（共 {len(df_filtered)} 条）")
-    st.dataframe(df_filtered.head(200), use_container_width=True)
+    total_rows = len(df_filtered)
+    st.subheader(f"数据表（共 {total_rows} 条）")
+    if total_rows == 0:
+        st.info("暂无符合筛选条件的数据。")
+    else:
+        page_size = st.number_input("每页显示条数", 50, 1000, 200, step=50, key="data_page_size")
+        total_pages = max(1, math.ceil(total_rows / page_size))
+        page_num = st.number_input("页码", 1, total_pages, 1, key="data_page_num")
+        start_idx = (page_num - 1) * page_size
+        end_idx = min(start_idx + page_size, total_rows)
+        st.caption(f"显示第 {start_idx + 1} - {end_idx} 条")
+        st.dataframe(df_filtered.iloc[start_idx:end_idx], use_container_width=True)
 
     st.subheader("在线同步（官方接口）")
     source_label = st.selectbox(
