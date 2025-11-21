@@ -221,16 +221,8 @@ with tab_generate:
 
 # --------------------- Tab4: 未来号码预测 + 历史回测（优化版） ---------------------
 with tab_predict:
-    st.header("🔮 基于历史冷热权重的未来号码预测 & 回测")
-    st.markdown(
-        """
-        **预测说明**：
-        - 从当前筛选后的历史数据统计出现频次
-        - 可设置最小奇数个数、最小连号数量
-        - 可排除前 N 期出现次数最多号码
-        - 支持回测历史 N 期预测结果并比对中奖情况
-        """
-    )
+    st.header("🔮 冷热权重预测 & 回测")
+    st.caption("基于历史开奖动态权重生成候选号码，并可回测最近若干期命中情况。")
 
     # ----------------- 全局规则 -----------------
     predict_rules = {
@@ -244,39 +236,43 @@ with tab_predict:
         "consecutive_mode": "min"
     }
 
-    col1, col2 = st.columns([2,1])
-    with col1:
-        use_recent_n = st.number_input("用于权重计算的最近 N 期（0=全部）", min_value=0, max_value=1000, value=2, key="tab4_recent_n")
-        pred_count = st.number_input("每期预测注数", min_value=1, max_value=20, value=5, key="tab4_pred_count")
-        pred_selected_front = st.multiselect("预测：前区使用区块", front_labels, default=front_labels, key="tab4_front")
-        pred_selected_back = st.multiselect("预测：后区使用区块", back_labels, default=back_labels, key="tab4_back")
-        min_consec = st.number_input("前区最小连号数量", min_value=0, max_value=5, value=1, key="tab4_min_consec")
-        min_odd = st.number_input("前区最小奇数个数", min_value=0, max_value=5, value=2, key="tab4_min_odd")
+    with st.expander("🎯 预测参数", expanded=True):
+        base_cols = st.columns(4)
+        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
+        pred_count = base_cols[1].number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
+        min_consec = base_cols[2].number_input("前区最小连号", 0, 5, 1, key="tab4_min_consec")
+        min_odd = base_cols[3].number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
 
-        top_n_blocks_future = st.number_input("前区仅使用前 N 权重区块", min_value=3, max_value=7, value=4,
-                                              key="tab4_top_n_blocks")
-        max_per_block_future = st.number_input("每个区块最多选号码", 1, 5, 2, key="tab4_max_per_block")
-        exclude_top_n = st.checkbox("排除前 N 期出现次数最多的号码", value=False, key="tab4_exclude_top_n")
-        exclude_top_front_n = st.number_input("前区排除次数最多的N个号码", min_value=0, max_value=10, value=3, key="tab4_exclude_front_n")
-        exclude_top_back_n = st.number_input("后区排除次数最多的N个号码", min_value=0, max_value=5, value=2, key="tab4_exclude_back_n")
-        backtest_n = st.number_input("回测历史 N 期（0=不回测）", min_value=0, max_value=500, value=10, key="tab4_backtest_n")
-        span = st.slider("移动平均 EWMA span（越小越重视近期）", min_value=1, max_value=5, value=1, key="tab4_span")
-        random_blocks_count_future = st.number_input("每期随机选区块数量", 1, len(front_labels),
-                                                     min(3, len(front_labels)), key="tab4_random_blocks_count")
-        random_back_blocks_count_future = st.number_input(
-            "每期随机选后区区块数量",
-            1,
-            len(back_labels),
-            min(2, len(back_labels)),
-            key="tab4_random_back_blocks_count"
+        block_cols = st.columns(2)
+        pred_selected_front = block_cols[0].multiselect("前区区块", front_labels, default=front_labels, key="tab4_front")
+        pred_selected_back = block_cols[1].multiselect("后区区块", back_labels, default=back_labels, key="tab4_back")
+
+        adv_cols = st.columns(3)
+        top_n_blocks_future = adv_cols[0].number_input(
+            "前区仅用前N区块", min_value=3, max_value=7, value=4, key="tab4_top_n_blocks"
+        )
+        max_per_block_future = adv_cols[1].number_input("每区块最多取", 1, 5, 2, key="tab4_max_per_block")
+        random_blocks_count_future = adv_cols[2].number_input(
+            "每期随机区块数", 1, len(front_labels), min(3, len(front_labels)), key="tab4_random_blocks_count"
         )
 
-    with col2:
-        st.markdown("""
-        **说明**：
-        - 可生成未来预测并对历史回测进行中奖比对
-        - 每期预测结果放一行，多注列显示
-        """)
+        adv_back_cols = st.columns(2)
+        random_back_blocks_count_future = adv_back_cols[0].number_input(
+            "后区随机区块数", 1, len(back_labels), min(2, len(back_labels)), key="tab4_random_back_blocks_count"
+        )
+        span = adv_back_cols[1].slider("EWMA span", 1, 5, 1, key="tab4_span")
+
+    with st.expander("🧹 排除与回测设置", expanded=False):
+        exclude_top_n = st.checkbox("排除近期高频号码", value=False, key="tab4_exclude_top_n")
+        exclusion_cols = st.columns(2)
+        exclude_top_front_n = exclusion_cols[0].number_input(
+            "前区排除数量", 0, 10, 3, key="tab4_exclude_front_n"
+        )
+        exclude_top_back_n = exclusion_cols[1].number_input(
+            "后区排除数量", 0, 5, 2, key="tab4_exclude_back_n"
+        )
+        backtest_n = st.number_input("回测历史期数（0=不回测）", 0, 500, 10, key="tab4_backtest_n")
+        st.caption("建议调小 N 和区块数量以提升生成速度。")
 
     # ----------------- 计算区块权重 -----------------
     front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history_ewma(
