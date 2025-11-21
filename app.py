@@ -63,6 +63,82 @@ front_bins = [(1,5),(6,10),(11,15),(16,20),(21,25),(26,30),(31,35)]
 front_labels = ["1-5","6-10","11-15","16-20","21-25","26-30","31-35"]
 back_bins = [(1,2),(3,4),(5,6),(7,8),(9,10),(11,12)]
 back_labels = [f"{lo}-{hi}" for lo, hi in back_bins]
+front_blocks_full = {label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)}
+back_blocks_full = {label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)}
+
+def build_history_window(df_source: pd.DataFrame, recent_n: int = 0, cutoff_date=None) -> pd.DataFrame:
+    """
+    根据 recent_n 和可选截止日期，返回按日期升序的历史窗口
+    """
+    df_sorted = df_source.sort_values("date", ascending=True)
+    if cutoff_date is not None:
+        df_sorted = df_sorted[df_sorted["date"] <= pd.to_datetime(cutoff_date)]
+    if recent_n and recent_n > 0:
+        df_sorted = df_sorted.tail(recent_n)
+    return df_sorted
+
+def prepare_generation_context(
+    df_window: pd.DataFrame,
+    span: int,
+    front_blocks_labels,
+    back_blocks_labels,
+    selected_front_blocks,
+    selected_back_blocks,
+):
+    """
+    基于 df_window 计算权重/频次，并生成 generator 所需的区块映射
+    """
+    front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history_ewma(
+        df_window,
+        front_blocks=front_blocks_full,
+        back_blocks=back_blocks_full,
+        recent_n=0,
+        out_min=0.2,
+        out_max=1.5,
+        span=span
+    )
+
+    gen_front_blocks, gen_back_blocks, gen_front_weights, gen_back_weights = prepare_generator_inputs(
+        front_blocks_labels=front_blocks_labels,
+        front_bins=front_bins,
+        back_blocks_labels=back_blocks_labels,
+        back_bins=back_bins,
+        selected_front_blocks=selected_front_blocks,
+        selected_back_blocks=selected_back_blocks,
+        block_front_weights=front_block_weights,
+        block_back_weights=back_block_weights
+    )
+
+    return {
+        "front_blocks": gen_front_blocks,
+        "back_blocks": gen_back_blocks,
+        "front_weights": gen_front_weights,
+        "back_weights": gen_back_weights,
+        "front_freq_map": front_freq_map,
+        "back_freq_map": back_freq_map
+    }
+
+def compute_exclusions(front_freq_map, back_freq_map, exclude_top_n, exclude_front_n, exclude_back_n):
+    if not exclude_top_n:
+        return [], []
+    top_front = sorted(front_freq_map.items(), key=lambda x: -x[1])[:exclude_front_n]
+    top_back = sorted(back_freq_map.items(), key=lambda x: -x[1])[:exclude_back_n]
+    return [n for n, _ in top_front], [n for n, _ in top_back]
+
+def assemble_rules(base_rules, min_consec, min_odd, exclude_front, exclude_back,
+                   top_n_blocks, max_per_block, random_blocks_count, random_back_blocks_count):
+    rules = base_rules.copy()
+    rules.update({
+        "consecutive_count": min_consec,
+        "odd_even_front": [min_odd, 5 - min_odd],
+        "front_exclude": exclude_front,
+        "back_exclude": exclude_back,
+        "top_n_blocks": top_n_blocks,
+        "max_per_block": max_per_block,
+        "random_blocks_count": random_blocks_count,
+        "random_back_blocks_count": random_back_blocks_count
+    })
+    return rules
 
 # --------------------- Tab1: 数据管理 ---------------------
 with tab_data:
@@ -274,57 +350,47 @@ with tab_predict:
         backtest_n = st.number_input("回测历史期数（0=不回测）", 0, 500, 10, key="tab4_backtest_n")
         st.caption("建议调小 N 和区块数量以提升生成速度。")
 
-    # ----------------- 计算区块权重 -----------------
-    front_block_weights, back_block_weights, front_freq_map, back_freq_map = compute_weights_from_history_ewma(
-        df_filtered,
-        front_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)},
-        back_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)},
-        recent_n=use_recent_n,
-        out_min=0.2,
-        out_max=1.5,
-        span=span
-    )
-
-    # ----------------- 排除高频号码 -----------------
-    exclude_front = []
-    exclude_back = []
-    if exclude_top_n:
-        top_front = sorted(front_freq_map.items(), key=lambda x: -x[1])[:exclude_top_front_n]
-        top_back = sorted(back_freq_map.items(), key=lambda x: -x[1])[:exclude_top_back_n]
-        exclude_front = [n for n,_ in top_front]
-        exclude_back = [n for n,_ in top_back]
-
-    # ----------------- 准备 generator 输入 -----------------
-    gen_front_blocks, gen_back_blocks, gen_front_weights, gen_back_weights = prepare_generator_inputs(
+    # ----------------- 基线历史窗口 & 生成上下文 -----------------
+    recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
+    generation_context = prepare_generation_context(
+        df_window=recent_window,
+        span=span,
         front_blocks_labels=front_labels,
-        front_bins=front_bins,
         back_blocks_labels=back_labels,
-        back_bins=back_bins,
         selected_front_blocks=pred_selected_front,
         selected_back_blocks=pred_selected_back,
-        block_front_weights=front_block_weights,
-        block_back_weights=back_block_weights
+    )
+
+    # ----------------- 排除高频号码（与回测共用逻辑） -----------------
+    exclude_front, exclude_back = compute_exclusions(
+        generation_context["front_freq_map"],
+        generation_context["back_freq_map"],
+        exclude_top_n,
+        exclude_top_front_n,
+        exclude_top_back_n
     )
 
     # ----------------- 生成未来预测号码 -----------------
     if st.button("生成未来预测号码", key="tab4_gen_future"):
-        rules_future = predict_rules.copy()
-        rules_future["consecutive_count"] = min_consec
-        rules_future["odd_even_front"] = [min_odd, 5 - min_odd]
-        rules_future["front_exclude"] = exclude_front
-        rules_future["back_exclude"] = exclude_back
-        rules_future["top_n_blocks"] = top_n_blocks_future
-        rules_future["max_per_block"] = max_per_block_future
-        rules_future["random_blocks_count"] = random_blocks_count_future
-        rules_future["random_back_blocks_count"] = random_back_blocks_count_future
+        rules_future = assemble_rules(
+            base_rules=predict_rules,
+            min_consec=min_consec,
+            min_odd=min_odd,
+            exclude_front=exclude_front,
+            exclude_back=exclude_back,
+            top_n_blocks=top_n_blocks_future,
+            max_per_block=max_per_block_future,
+            random_blocks_count=random_blocks_count_future,
+            random_back_blocks_count=random_back_blocks_count_future
+        )
 
         cands = genmod.gen_numbers(
             count=pred_count,
             rules=rules_future,
-            front_blocks=gen_front_blocks,
-            back_blocks=gen_back_blocks,
-            front_weights=gen_front_weights,
-            back_weights=gen_back_weights,
+            front_blocks=generation_context["front_blocks"],
+            back_blocks=generation_context["back_blocks"],
+            front_weights=generation_context["front_weights"],
+            back_weights=generation_context["back_weights"],
             selected_front_blocks=pred_selected_front,
             selected_back_blocks=pred_selected_back
         )
@@ -388,64 +454,50 @@ with tab_predict:
         backtest_data = []
         for idx, row in history_df.iterrows():
             # 每一期都重新计算前N期的权重
-            if use_recent_n > 0:
-                recent_window = df_filtered[df_filtered['date'] <= row['date']].sort_values('date',
-                                                                                            ascending=True).tail(
-                    use_recent_n)
-            else:
-                recent_window = df_filtered[df_filtered['date'] <= row['date']].sort_values('date', ascending=True)
-
-            front_block_weights_dyn, back_block_weights_dyn, front_freq_map_dyn, back_freq_map_dyn = compute_weights_from_history_ewma(
-                recent_window,
-                front_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(front_labels, front_bins)},
-                back_blocks={label: list(range(lo, hi + 1)) for label, (lo, hi) in zip(back_labels, back_bins)},
-                recent_n=0,  # 已经在 recent_window 里选好了 N 期
-                out_min=0.2,
-                out_max=1.5,
-                span=span
+            recent_window_dyn = build_history_window(
+                df_filtered,
+                recent_n=use_recent_n,
+                cutoff_date=row["date"]
             )
 
-            # 排除高频号码（每期动态）
-            exclude_front_dyn = []
-            exclude_back_dyn = []
-            if exclude_top_n:
-                top_front = sorted(front_freq_map_dyn.items(), key=lambda x: -x[1])[:exclude_top_front_n]
-                top_back = sorted(back_freq_map_dyn.items(), key=lambda x: -x[1])[:exclude_top_back_n]
-                exclude_front_dyn = [n for n, _ in top_front]
-                exclude_back_dyn = [n for n, _ in top_back]
-
-            # 准备 generator 输入
-            gen_front_blocks_dyn, gen_back_blocks_dyn, gen_front_weights_dyn, gen_back_weights_dyn = prepare_generator_inputs(
+            generation_context_dyn = prepare_generation_context(
+                df_window=recent_window_dyn,
+                span=span,
                 front_blocks_labels=front_labels,
-                front_bins=front_bins,
                 back_blocks_labels=back_labels,
-                back_bins=back_bins,
                 selected_front_blocks=pred_selected_front,
                 selected_back_blocks=pred_selected_back,
-                block_front_weights=front_block_weights_dyn,
-                block_back_weights=back_block_weights_dyn
+            )
+
+            # 排除高频号码（每期动态，与预测一致）
+            exclude_front_dyn, exclude_back_dyn = compute_exclusions(
+                generation_context_dyn["front_freq_map"],
+                generation_context_dyn["back_freq_map"],
+                exclude_top_n,
+                exclude_top_front_n,
+                exclude_top_back_n
             )
 
             # 生成号码
-            rules_hist_dyn = predict_rules.copy()
-            rules_hist_dyn.update({
-                "consecutive_count": min_consec,
-                "odd_even_front": [min_odd, 5 - min_odd],
-                "front_exclude": exclude_front_dyn,
-                "back_exclude": exclude_back_dyn,
-                "top_n_blocks": top_n_blocks_future,
-                "max_per_block": max_per_block_future,
-                "random_blocks_count": random_blocks_count_future,
-                "random_back_blocks_count": random_back_blocks_count_future
-            })
+            rules_hist_dyn = assemble_rules(
+                base_rules=predict_rules,
+                min_consec=min_consec,
+                min_odd=min_odd,
+                exclude_front=exclude_front_dyn,
+                exclude_back=exclude_back_dyn,
+                top_n_blocks=top_n_blocks_future,
+                max_per_block=max_per_block_future,
+                random_blocks_count=random_blocks_count_future,
+                random_back_blocks_count=random_back_blocks_count_future
+            )
 
             gen = genmod.gen_numbers(
                 count=pred_count,
                 rules=rules_hist_dyn,
-                front_blocks=gen_front_blocks_dyn,
-                back_blocks=gen_back_blocks_dyn,
-                front_weights=gen_front_weights_dyn,
-                back_weights=gen_back_weights_dyn,
+                front_blocks=generation_context_dyn["front_blocks"],
+                back_blocks=generation_context_dyn["back_blocks"],
+                front_weights=generation_context_dyn["front_weights"],
+                back_weights=generation_context_dyn["back_weights"],
                 selected_front_blocks=pred_selected_front,
                 selected_back_blocks=pred_selected_back
             )
