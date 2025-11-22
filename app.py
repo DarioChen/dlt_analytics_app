@@ -711,8 +711,8 @@ with tab_predict:
                 prize_name = check_prize(
                     c["front"],
                     c["back"],
-                    row[["f1", "f2", "f3", "f4", "f5"]],
-                    row[["b1", "b2"]]
+                    row[["f1", "f2", "f3", "f4", "f5"]].tolist(),
+                    row[["b1", "b2"]].tolist()
                 )
                 row_data[f"中奖情况{i}"] = prize_name
                 row_return += prize_amounts.get(prize_name, 0.0)
@@ -1093,6 +1093,12 @@ with tab_ai:
         batch_random_blocks_count = batch_adv_cols[2].number_input("每期随机区块数", 1, 7, 
                                                                     st.session_state.get('tab4_random_blocks_count', 4), key="batch_random_blocks_count")
         
+        batch_back_cols = st.columns(1)
+        batch_random_back_blocks_count = batch_back_cols[0].number_input(
+            "后区随机区块数", 1, len(back_labels), 
+            st.session_state.get('tab4_random_back_blocks_count', 1), key="batch_random_back_blocks_count"
+        )
+        
         batch_exclude_cols = st.columns(3)
         batch_exclude_top_n = batch_exclude_cols[0].checkbox("排除近期高频号码", 
                                                              st.session_state.get('tab4_exclude_top_n', False), key="batch_exclude_top_n")
@@ -1237,7 +1243,7 @@ with tab_ai:
                                 top_n_blocks=batch_top_n_blocks,
                                 max_per_block=batch_max_per_block,
                                 random_blocks_count=batch_random_blocks_count,
-                                random_back_blocks_count=st.session_state.get('tab4_random_back_blocks_count', 1)
+                                random_back_blocks_count=batch_random_back_blocks_count
                             )
                             
                             gen_bt = genmod.gen_numbers(
@@ -1259,8 +1265,8 @@ with tab_ai:
                             for c in gen_bt:
                                 prize_name = check_prize_bt(
                                     c["front"], c["back"],
-                                    row[["f1", "f2", "f3", "f4", "f5"]],
-                                    row[["b1", "b2"]]
+                                    row[["f1", "f2", "f3", "f4", "f5"]].tolist(),
+                                    row[["b1", "b2"]].tolist()
                                 )
                                 period_return += batch_prize_amounts.get(prize_name, 0.0)
                                 period_prizes.append(prize_name)
