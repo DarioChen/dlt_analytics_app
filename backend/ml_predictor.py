@@ -65,8 +65,32 @@ class MLPredictor:
         y = (df_feat[target_col].values > 17).astype(int)  # 简化：预测是否大于中位数
         
         if self.model_type == "lightgbm" and HAS_LIGHTGBM:
-            self.front_model = lgb.LGBMClassifier(n_estimators=50, random_state=42, verbose=-1)
-            self.front_model.fit(X, y)
+            try:
+                # 尝试使用 sklearn 接口
+                self.front_model = lgb.LGBMClassifier(n_estimators=50, random_state=42, verbose=-1)
+                self.front_model.fit(X, y)
+            except Exception as e:
+                if "scikit-learn" in str(e).lower() or "sklearn" in str(e).lower():
+                    # 如果缺少 sklearn，尝试使用原生 API
+                    try:
+                        train_data = lgb.Dataset(X, label=y)
+                        params = {
+                            'objective': 'binary',
+                            'metric': 'binary_logloss',
+                            'boosting_type': 'gbdt',
+                            'num_leaves': 31,
+                            'learning_rate': 0.05,
+                            'feature_fraction': 0.9,
+                            'bagging_fraction': 0.8,
+                            'bagging_freq': 5,
+                            'verbose': -1,
+                            'seed': 42
+                        }
+                        self.front_model = lgb.train(params, train_data, num_boost_round=50)
+                    except Exception as e2:
+                        raise ImportError(f"LightGBM 需要 scikit-learn。请运行: pip install scikit-learn\n原始错误: {e}")
+                else:
+                    raise
         elif self.model_type == "xgboost" and HAS_XGBOOST:
             self.front_model = xgb.XGBClassifier(n_estimators=50, random_state=42, verbosity=0)
             self.front_model.fit(X, y)

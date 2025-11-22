@@ -1,6 +1,7 @@
 # app.py (v1.4)
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import random
 import math
@@ -373,7 +374,7 @@ with tab_predict:
     with st.expander("🎯 预测参数", expanded=True):
         base_cols = st.columns(4)
         # 使用优化后的默认值：recent_n=3
-        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 3, key="tab4_recent_n")
+        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
         pred_count = base_cols[1].number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
         # 使用优化后的默认值：min_consec=0
         min_consec = base_cols[2].number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
@@ -387,7 +388,7 @@ with tab_predict:
         adv_cols = st.columns(3)
         # 使用优化后的默认值：top_n_blocks=5
         top_n_blocks_future = adv_cols[0].number_input(
-            "前区仅用前N区块", min_value=3, max_value=7, value=5, key="tab4_top_n_blocks"
+            "前区仅用前N区块", min_value=3, max_value=7, value=4, key="tab4_top_n_blocks"
         )
         # 使用优化后的默认值：max_per_block=2
         max_per_block_future = adv_cols[1].number_input("每区块最多取", 1, 5, 2, key="tab4_max_per_block")
@@ -399,7 +400,7 @@ with tab_predict:
         adv_back_cols = st.columns(2)
         # 使用优化后的默认值：random_back_blocks_count=1
         random_back_blocks_count_future = adv_back_cols[0].number_input(
-            "后区随机区块数", 1, len(back_labels), 1, key="tab4_random_back_blocks_count"
+            "后区随机区块数", 1, len(back_labels), 3, key="tab4_random_back_blocks_count"
         )
         # 使用优化后的默认值：span=1
         span = adv_back_cols[1].slider("EWMA span", 1, 5, 1, key="tab4_span")
@@ -445,16 +446,72 @@ with tab_predict:
                     key=f"prize_amount_{name}"
                 )
 
+    # ----------------- 检查是否使用AI模型 -----------------
+    use_ai_model = st.checkbox("使用AI模型预测（需先训练模型）", value=False, key="tab4_use_ai")
+    ml_predictor = st.session_state.get('ml_predictor', None)
+    if use_ai_model and ml_predictor is None:
+        st.warning("⚠️ 未检测到训练好的AI模型，请在'AI优化与模型训练'标签页先训练模型。")
+        use_ai_model = False
+    
     # ----------------- 基线历史窗口 & 生成上下文 -----------------
     recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
-    generation_context = prepare_generation_context(
-        df_window=recent_window,
-        span=span,
-        front_blocks_labels=front_labels,
-        back_blocks_labels=back_labels,
-        selected_front_blocks=pred_selected_front,
-        selected_back_blocks=pred_selected_back,
-    )
+    
+    # 如果使用AI模型，用ML预测器计算权重
+    if use_ai_model and ml_predictor is not None:
+        try:
+            from backend.ml_predictor import MLPredictor
+            front_ml_weights, back_ml_weights = ml_predictor.predict_number_weights(
+                recent_window, front_range=range(1,36), back_range=range(1,13)
+            )
+            # 将号码权重转换为区块权重
+            front_block_weights_ai = {}
+            back_block_weights_ai = {}
+            for label, (lo, hi) in zip(front_labels, front_bins):
+                block_nums = list(range(lo, hi+1))
+                avg_weight = np.mean([front_ml_weights.get(n, 0) for n in block_nums])
+                front_block_weights_ai[label] = float(avg_weight * 10 + 0.5)  # 放大并归一化
+            
+            for label, (lo, hi) in zip(back_labels, back_bins):
+                block_nums = list(range(lo, hi+1))
+                avg_weight = np.mean([back_ml_weights.get(n, 0) for n in block_nums])
+                back_block_weights_ai[label] = float(avg_weight * 10 + 0.5)
+            
+            # 归一化到合理范围
+            from predictor import normalize_block_weights
+            front_block_weights_ai = normalize_block_weights(front_block_weights_ai, 0.2, 1.5)
+            back_block_weights_ai = normalize_block_weights(back_block_weights_ai, 0.2, 1.5)
+            
+            generation_context = prepare_generation_context(
+                df_window=recent_window,
+                span=span,
+                front_blocks_labels=front_labels,
+                back_blocks_labels=back_labels,
+                selected_front_blocks=pred_selected_front,
+                selected_back_blocks=pred_selected_back,
+            )
+            # 用AI权重替换
+            generation_context["front_weights"] = front_block_weights_ai
+            generation_context["back_weights"] = back_block_weights_ai
+            st.info(f"✅ 使用AI模型（{st.session_state.get('model_type', 'unknown')}）计算权重")
+        except Exception as e:
+            st.warning(f"AI模型预测失败，回退到EWMA方法: {e}")
+            generation_context = prepare_generation_context(
+                df_window=recent_window,
+                span=span,
+                front_blocks_labels=front_labels,
+                back_blocks_labels=back_labels,
+                selected_front_blocks=pred_selected_front,
+                selected_back_blocks=pred_selected_back,
+            )
+    else:
+        generation_context = prepare_generation_context(
+            df_window=recent_window,
+            span=span,
+            front_blocks_labels=front_labels,
+            back_blocks_labels=back_labels,
+            selected_front_blocks=pred_selected_front,
+            selected_back_blocks=pred_selected_back,
+        )
 
     # ----------------- 排除高频号码（与回测共用逻辑） -----------------
     exclude_front, exclude_back = compute_exclusions(
@@ -506,6 +563,46 @@ with tab_predict:
             pred_df = pd.DataFrame(rows)
 
             st.subheader(f"未来预测结果（共 {len(cands)} 注）")
+            if use_ai_model:
+                st.info(f"🤖 使用AI模型（{st.session_state.get('model_type', 'unknown')}）生成")
+            
+            # 可视化：号码分布热力图
+            st.subheader("📊 预测号码分布可视化")
+            
+            # 前区号码分布
+            front_nums_all = []
+            for c in cands:
+                front_nums_all.extend(c["front"])
+            front_counts = pd.Series(front_nums_all).value_counts().sort_index()
+            
+            back_nums_all = []
+            for c in cands:
+                back_nums_all.extend(c["back"])
+            back_counts = pd.Series(back_nums_all).value_counts().sort_index()
+            
+            viz_cols = st.columns(2)
+            with viz_cols[0]:
+                st.write("**前区号码出现频次**")
+                fig_front_dist = px.bar(
+                    x=front_counts.index, 
+                    y=front_counts.values,
+                    labels={"x": "号码", "y": "出现次数"},
+                    title="前区号码分布"
+                )
+                st.plotly_chart(fig_front_dist, use_container_width=True)
+            
+            with viz_cols[1]:
+                st.write("**后区号码出现频次**")
+                fig_back_dist = px.bar(
+                    x=back_counts.index,
+                    y=back_counts.values,
+                    labels={"x": "号码", "y": "出现次数"},
+                    title="后区号码分布"
+                )
+                st.plotly_chart(fig_back_dist, use_container_width=True)
+            
+            # 显示详细表格
+            st.subheader("📋 详细预测号码")
             st.dataframe(pred_df, use_container_width=False)
 
     # ----------------- 历史回测 -----------------
@@ -713,29 +810,80 @@ with tab_ai:
         
         if st.button("开始训练模型", key="ai_train_btn"):
             try:
+                st.info("正在初始化...")
                 from backend.ml_predictor import create_ml_predictor
+                try:
+                    from backend.ml_predictor import HAS_LIGHTGBM, HAS_XGBOOST
+                except ImportError:
+                    HAS_LIGHTGBM = False
+                    HAS_XGBOOST = False
                 from backend.features import extract_all_features
                 
-                train_df = df_filtered.sort_values("date", ascending=True).tail(train_window)
+                # 检查依赖
+                if model_type == "lightgbm" and not HAS_LIGHTGBM:
+                    st.error("❌ 缺少 lightgbm 库")
+                    st.code("pip install lightgbm scikit-learn", language="bash")
+                    st.stop()
+                elif model_type == "xgboost" and not HAS_XGBOOST:
+                    st.error("❌ 缺少 xgboost 库")
+                    st.code("pip install xgboost scikit-learn", language="bash")
+                    st.stop()
+                
+                # 检查 scikit-learn（lightgbm 和 xgboost 都需要）
+                try:
+                    import sklearn
+                except ImportError:
+                    st.error("❌ 缺少 scikit-learn 库（LightGBM/XGBoost 需要）")
+                    st.code("pip install scikit-learn", language="bash")
+                    st.stop()
+                
+                # 准备训练数据
+                st.info(f"准备训练数据（使用最近 {train_window} 期）...")
+                if len(df_filtered) < train_window:
+                    st.warning(f"可用数据只有 {len(df_filtered)} 期，少于请求的 {train_window} 期。将使用全部可用数据。")
+                    train_df = df_filtered.sort_values("date", ascending=True)
+                else:
+                    train_df = df_filtered.sort_values("date", ascending=True).tail(train_window)
+                
+                st.info("提取特征中...")
                 train_df = extract_all_features(train_df)
+                st.info(f"特征提取完成，共 {len(train_df)} 条记录，{len(train_df.columns)} 个特征列")
                 
                 predictor = create_ml_predictor(model_type=model_type if model_type != "frequency" else "lightgbm")
                 
                 if model_type != "frequency":
-                    with st.spinner("训练中..."):
-                        predictor.train_front_model(train_df, target_col="f1")
-                    st.success(f"{model_type.upper()} 模型训练完成！")
+                    with st.spinner(f"训练 {model_type.upper()} 模型中..."):
+                        result = predictor.train_front_model(train_df, target_col="f1")
+                        if result is None:
+                            st.warning("训练数据不足或特征提取失败，模型未训练。将使用频率模型。")
+                            predictor = None
+                        else:
+                            st.success(f"{model_type.upper()} 模型训练完成！")
                 else:
                     st.info("使用频率模型（无需训练）")
                 
                 # 保存到session state
-                st.session_state['ml_predictor'] = predictor
-                st.session_state['model_type'] = model_type
+                if predictor is not None:
+                    st.session_state['ml_predictor'] = predictor
+                    st.session_state['model_type'] = model_type
+                    st.success("模型已保存到会话状态，可在预测时使用。")
+                else:
+                    st.session_state['ml_predictor'] = None
+                    st.session_state['model_type'] = "frequency"
                 
             except ImportError as e:
-                st.error(f"缺少依赖库：{e}。请运行 pip install lightgbm xgboost")
+                error_msg = str(e)
+                if "scikit-learn" in error_msg.lower() or "sklearn" in error_msg.lower():
+                    st.error("❌ 缺少 scikit-learn 库（LightGBM/XGBoost 需要）")
+                    st.code("pip install scikit-learn", language="bash")
+                else:
+                    st.error(f"❌ 缺少依赖库：{e}")
+                    st.code("pip install lightgbm xgboost scikit-learn", language="bash")
             except Exception as e:
                 st.error(f"训练失败：{e}")
+                import traceback
+                with st.expander("查看详细错误信息"):
+                    st.code(traceback.format_exc())
     
     with ai_tabs[1]:
         st.subheader("自动参数优化")
@@ -910,12 +1058,292 @@ with tab_ai:
                 st.code(traceback.format_exc())
     
     with ai_tabs[2]:
-        st.subheader("策略对比分析")
-        st.write("对比不同策略参数的回测表现")
+        st.subheader("AI批量回测与可视化")
+        st.write("使用AI模型进行批量回测，可视化回测结果和生成号码")
         
-        if 'optimized_params' in st.session_state:
-            st.info("检测到已优化的参数，可以在'未来号码预测'标签页中使用。")
+        # 检查AI模型
+        ml_predictor_bt = st.session_state.get('ml_predictor', None)
+        if ml_predictor_bt is None:
+            st.warning("⚠️ 请先在'模型训练'标签页训练AI模型")
+        else:
+            st.success(f"✅ 已加载AI模型：{st.session_state.get('model_type', 'unknown')}")
         
-        if st.button("运行策略对比", key="ai_compare_btn"):
-            st.info("策略对比功能开发中，将显示多个策略的ROI、中奖率等指标对比图表。")
+        # 批量回测参数
+        batch_backtest_cols = st.columns(3)
+        batch_test_n = batch_backtest_cols[0].number_input("回测期数", 10, 200, 50, key="batch_test_n")
+        batch_pred_count = batch_backtest_cols[1].number_input("每期注数", 1, 20, 5, key="batch_pred_count")
+        batch_use_ai = batch_backtest_cols[2].checkbox("使用AI模型", value=True, key="batch_use_ai")
+        
+        # 批量回测参数设置（从session state或使用默认值）
+        batch_params_cols = st.columns(4)
+        batch_recent_n = batch_params_cols[0].number_input("权重最近N期", 0, 1000, 
+                                                           st.session_state.get('tab4_recent_n', 3), key="batch_recent_n")
+        batch_span = batch_params_cols[1].number_input("EWMA span", 1, 5, 
+                                                       st.session_state.get('tab4_span', 1), key="batch_span")
+        batch_min_consec = batch_params_cols[2].number_input("前区最小连号", 0, 5, 
+                                                            st.session_state.get('tab4_min_consec', 0), key="batch_min_consec")
+        batch_min_odd = batch_params_cols[3].number_input("前区最小奇数", 0, 5, 
+                                                          st.session_state.get('tab4_min_odd', 2), key="batch_min_odd")
+        
+        batch_adv_cols = st.columns(3)
+        batch_top_n_blocks = batch_adv_cols[0].number_input("前区仅用前N区块", 3, 7, 
+                                                             st.session_state.get('tab4_top_n_blocks', 5), key="batch_top_n_blocks")
+        batch_max_per_block = batch_adv_cols[1].number_input("每区块最多取", 1, 5, 
+                                                             st.session_state.get('tab4_max_per_block', 2), key="batch_max_per_block")
+        batch_random_blocks_count = batch_adv_cols[2].number_input("每期随机区块数", 1, 7, 
+                                                                    st.session_state.get('tab4_random_blocks_count', 4), key="batch_random_blocks_count")
+        
+        batch_exclude_cols = st.columns(3)
+        batch_exclude_top_n = batch_exclude_cols[0].checkbox("排除近期高频号码", 
+                                                             st.session_state.get('tab4_exclude_top_n', False), key="batch_exclude_top_n")
+        batch_exclude_front_n = batch_exclude_cols[1].number_input("前区排除数量", 0, 10, 
+                                                                    st.session_state.get('tab4_exclude_front_n', 3), key="batch_exclude_front_n")
+        batch_exclude_back_n = batch_exclude_cols[2].number_input("后区排除数量", 0, 5, 
+                                                                  st.session_state.get('tab4_exclude_back_n', 2), key="batch_exclude_back_n")
+        
+        # 获取奖金参数
+        PRIZE_PAYOUT_DEFAULT_BT = {
+            "一等奖": 5000000.0, "二等奖": 1500000.0, "三等奖": 10000.0,
+            "四等奖": 3000.0, "五等奖": 300.0, "六等奖": 200.0,
+            "七等奖": 100.0, "八等奖": 15.0, "九等奖": 5.0
+        }
+        batch_prize_amounts = {}
+        for name, default_val in PRIZE_PAYOUT_DEFAULT_BT.items():
+            batch_prize_amounts[name] = st.session_state.get(f'prize_amount_{name}', default_val)
+        batch_ticket_cost = st.session_state.get('tab4_ticket_cost', 3.0)
+        
+        if st.button("开始AI批量回测", key="ai_batch_backtest_btn"):
+            if ml_predictor_bt is None and batch_use_ai:
+                st.error("未检测到AI模型，请先训练模型或取消'使用AI模型'选项")
+            else:
+                try:
+                    with st.spinner("正在进行AI批量回测..."):
+                        history_df_bt = df_filtered.sort_values("date", ascending=False).head(batch_test_n).reset_index(drop=True)
+                        
+                        backtest_results = []
+                        cumulative_cost = []
+                        cumulative_return = []
+                        cumulative_roi = []
+                        prize_counts = {name: 0 for name in ["一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖", "七等奖", "八等奖", "九等奖", "未中奖"]}
+                        
+                        # 定义check_prize函数
+                        PRIZE_RULES_BT = [
+                            ("一等奖", lambda fc,bc: fc==5 and bc==2),
+                            ("二等奖", lambda fc,bc: fc==5 and bc==1),
+                            ("三等奖", lambda fc,bc: fc==5 and bc==0),
+                            ("四等奖", lambda fc,bc: fc>=4 and bc==2),
+                            ("五等奖", lambda fc,bc: fc>=4 and bc==1),
+                            ("六等奖", lambda fc,bc: fc>=3 and bc==2),
+                            ("七等奖", lambda fc,bc: fc>=4 and bc==0),
+                            ("八等奖", lambda fc,bc: (fc>=3 and bc>=1) or (fc==2 and bc==2)),
+                            ("九等奖", lambda fc,bc: (fc>=3) or (fc==1 and bc==2) or (fc==2 and bc==1) or (bc==2))
+                        ]
+                        
+                        def check_prize_bt(fc, bc, win_fc, win_bc):
+                            fc_match = len(set(fc)&set(win_fc))
+                            bc_match = len(set(bc)&set(win_bc))
+                            for name, cond in PRIZE_RULES_BT:
+                                if cond(fc_match, bc_match):
+                                    return name
+                            return "未中奖"
+                        
+                        predict_rules_bt = {
+                            "sum_front_range": [0, 999],
+                            "odd_even_front": [0, 5],
+                            "front_include": [],
+                            "front_exclude": [],
+                            "back_include": [],
+                            "back_exclude": [],
+                            "consecutive_count": 0,
+                            "consecutive_mode": "min"
+                        }
+                        
+                        for idx, row in history_df_bt.iterrows():
+                            # 构建历史窗口
+                            recent_window_bt = build_history_window(
+                                df_filtered,
+                                recent_n=batch_recent_n,
+                                cutoff_date=row["date"]
+                            )
+                            
+                            # 使用AI模型或EWMA计算权重
+                            if batch_use_ai and ml_predictor_bt is not None:
+                                try:
+                                    front_ml_weights_bt, back_ml_weights_bt = ml_predictor_bt.predict_number_weights(
+                                        recent_window_bt, front_range=range(1,36), back_range=range(1,13)
+                                    )
+                                    # 转换为区块权重
+                                    front_block_weights_bt = {}
+                                    back_block_weights_bt = {}
+                                    for label, (lo, hi) in zip(front_labels, front_bins):
+                                        block_nums = list(range(lo, hi+1))
+                                        avg_weight = np.mean([front_ml_weights_bt.get(n, 0) for n in block_nums])
+                                        front_block_weights_bt[label] = float(avg_weight * 10 + 0.5)
+                                    for label, (lo, hi) in zip(back_labels, back_bins):
+                                        block_nums = list(range(lo, hi+1))
+                                        avg_weight = np.mean([back_ml_weights_bt.get(n, 0) for n in block_nums])
+                                        back_block_weights_bt[label] = float(avg_weight * 10 + 0.5)
+                                    
+                                    from predictor import normalize_block_weights
+                                    front_block_weights_bt = normalize_block_weights(front_block_weights_bt, 0.2, 1.5)
+                                    back_block_weights_bt = normalize_block_weights(back_block_weights_bt, 0.2, 1.5)
+                                    
+                                    generation_context_bt = prepare_generation_context(
+                                        df_window=recent_window_bt,
+                                        span=batch_span,
+                                        front_blocks_labels=front_labels,
+                                        back_blocks_labels=back_labels,
+                                        selected_front_blocks=front_labels,
+                                        selected_back_blocks=back_labels,
+                                    )
+                                    generation_context_bt["front_weights"] = front_block_weights_bt
+                                    generation_context_bt["back_weights"] = back_block_weights_bt
+                                except Exception as e:
+                                    st.warning(f"第{idx+1}期AI预测失败，回退到EWMA: {e}")
+                                    generation_context_bt = prepare_generation_context(
+                                        df_window=recent_window_bt,
+                                        span=batch_span,
+                                        front_blocks_labels=front_labels,
+                                        back_blocks_labels=back_labels,
+                                        selected_front_blocks=front_labels,
+                                        selected_back_blocks=back_labels,
+                                    )
+                            else:
+                                generation_context_bt = prepare_generation_context(
+                                    df_window=recent_window_bt,
+                                    span=batch_span,
+                                    front_blocks_labels=front_labels,
+                                    back_blocks_labels=back_labels,
+                                    selected_front_blocks=front_labels,
+                                    selected_back_blocks=back_labels,
+                                )
+                            
+                            # 排除高频号码
+                            exclude_front_bt, exclude_back_bt = compute_exclusions(
+                                generation_context_bt["front_freq_map"],
+                                generation_context_bt["back_freq_map"],
+                                batch_exclude_top_n,
+                                batch_exclude_front_n,
+                                batch_exclude_back_n
+                            )
+                            
+                            # 生成号码
+                            rules_bt = assemble_rules(
+                                base_rules=predict_rules_bt,
+                                min_consec=batch_min_consec,
+                                min_odd=batch_min_odd,
+                                exclude_front=exclude_front_bt,
+                                exclude_back=exclude_back_bt,
+                                top_n_blocks=batch_top_n_blocks,
+                                max_per_block=batch_max_per_block,
+                                random_blocks_count=batch_random_blocks_count,
+                                random_back_blocks_count=st.session_state.get('tab4_random_back_blocks_count', 1)
+                            )
+                            
+                            gen_bt = genmod.gen_numbers(
+                                count=batch_pred_count,
+                                rules=rules_bt,
+                                front_blocks=generation_context_bt["front_blocks"],
+                                back_blocks=generation_context_bt["back_blocks"],
+                                front_weights=generation_context_bt["front_weights"],
+                                back_weights=generation_context_bt["back_weights"],
+                                selected_front_blocks=front_labels,
+                                selected_back_blocks=back_labels
+                            )
+                            
+                            # 计算收益
+                            period_cost = len(gen_bt) * batch_ticket_cost
+                            period_return = 0.0
+                            period_prizes = []
+                            
+                            for c in gen_bt:
+                                prize_name = check_prize_bt(
+                                    c["front"], c["back"],
+                                    row[["f1", "f2", "f3", "f4", "f5"]],
+                                    row[["b1", "b2"]]
+                                )
+                                period_return += batch_prize_amounts.get(prize_name, 0.0)
+                                period_prizes.append(prize_name)
+                                prize_counts[prize_name] = prize_counts.get(prize_name, 0) + 1
+                            
+                            period_roi = (period_return - period_cost) / period_cost if period_cost > 0 else 0.0
+                            
+                            cumulative_cost.append(period_cost + (cumulative_cost[-1] if cumulative_cost else 0))
+                            cumulative_return.append(period_return + (cumulative_return[-1] if cumulative_return else 0))
+                            current_roi = (cumulative_return[-1] - cumulative_cost[-1]) / cumulative_cost[-1] if cumulative_cost[-1] > 0 else 0.0
+                            cumulative_roi.append(current_roi)
+                            
+                            backtest_results.append({
+                                "期号": row["issue"],
+                                "日期": row["date"],
+                                "投入": period_cost,
+                                "回收": period_return,
+                                "收益": period_return - period_cost,
+                                "ROI": period_roi,
+                                "累计ROI": current_roi,
+                                "中奖情况": ", ".join(period_prizes[:3]) + ("..." if len(period_prizes) > 3 else "")
+                            })
+                        
+                        # 可视化结果
+                        st.success(f"✅ 批量回测完成！共 {len(backtest_results)} 期")
+                        
+                        # 汇总统计
+                        total_cost_bt = cumulative_cost[-1] if cumulative_cost else 0
+                        total_return_bt = cumulative_return[-1] if cumulative_return else 0
+                        final_roi_bt = cumulative_roi[-1] if cumulative_roi else 0
+                        
+                        summary_cols = st.columns(4)
+                        summary_cols[0].metric("总投入", f"{total_cost_bt:.0f} 元")
+                        summary_cols[1].metric("总回收", f"{total_return_bt:.0f} 元")
+                        summary_cols[2].metric("净收益", f"{total_return_bt - total_cost_bt:.0f} 元", 
+                                               delta=f"{final_roi_bt*100:.1f}%")
+                        summary_cols[3].metric("总注数", f"{len(backtest_results) * batch_pred_count} 注")
+                        
+                        # ROI趋势图
+                        st.subheader("📈 ROI趋势图")
+                        roi_df = pd.DataFrame({
+                            "期数": range(1, len(cumulative_roi) + 1),
+                            "累计ROI": cumulative_roi
+                        })
+                        fig_roi = px.line(roi_df, x="期数", y="累计ROI", 
+                                         title="累计ROI变化趋势",
+                                         labels={"累计ROI": "累计ROI (%)"})
+                        fig_roi.add_hline(y=0, line_dash="dash", line_color="red", 
+                                         annotation_text="保本线")
+                        st.plotly_chart(fig_roi, use_container_width=True)
+                        
+                        # 收益趋势图
+                        st.subheader("💰 收益趋势图")
+                        profit_df = pd.DataFrame({
+                            "期数": range(1, len(cumulative_cost) + 1),
+                            "累计投入": cumulative_cost,
+                            "累计回收": cumulative_return
+                        })
+                        fig_profit = px.line(profit_df, x="期数", y=["累计投入", "累计回收"],
+                                            title="累计投入与回收对比",
+                                            labels={"value": "金额（元）", "variable": "类型"})
+                        st.plotly_chart(fig_profit, use_container_width=True)
+                        
+                        # 中奖分布饼图
+                        st.subheader("🎯 中奖分布")
+                        prize_df = pd.DataFrame({
+                            "奖项": list(prize_counts.keys()),
+                            "次数": list(prize_counts.values())
+                        })
+                        prize_df = prize_df[prize_df["次数"] > 0]
+                        if len(prize_df) > 0:
+                            fig_prize = px.pie(prize_df, values="次数", names="奖项", 
+                                             title="中奖分布统计")
+                            st.plotly_chart(fig_prize, use_container_width=True)
+                        
+                        # 详细结果表
+                        st.subheader("📊 详细回测结果")
+                        results_df = pd.DataFrame(backtest_results)
+                        st.dataframe(results_df, use_container_width=True)
+                        
+                except Exception as e:
+                    st.error(f"批量回测失败：{e}")
+                    import traceback
+                    with st.expander("查看详细错误"):
+                        st.code(traceback.format_exc())
 
