@@ -55,8 +55,8 @@ df = dataframe_from_draws(rows)
 df_filtered = filter_df(df, start_issue, end_issue, start_date, end_date, recent_n_global)
 
 # --------------------- Tabs ---------------------
-tab_data, tab_chart, tab_generate, tab_predict = st.tabs(
-    ["📂 数据管理", "📊 数据图表", "🔢 号码生成", "🔮 未来号码预测"]
+tab_data, tab_chart, tab_generate, tab_predict, tab_ai = st.tabs(
+    ["📂 数据管理", "📊 数据图表", "🔢 号码生成", "🔮 未来号码预测", "🤖 AI优化与模型训练"]
 )
 
 # --------------------- 区块定义 ---------------------
@@ -372,9 +372,12 @@ with tab_predict:
 
     with st.expander("🎯 预测参数", expanded=True):
         base_cols = st.columns(4)
-        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
+        # 使用优化后的默认值：recent_n=3
+        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 3, key="tab4_recent_n")
         pred_count = base_cols[1].number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
-        min_consec = base_cols[2].number_input("前区最小连号", 0, 5, 1, key="tab4_min_consec")
+        # 使用优化后的默认值：min_consec=0
+        min_consec = base_cols[2].number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
+        # 使用优化后的默认值：min_odd=2
         min_odd = base_cols[3].number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
 
         block_cols = st.columns(2)
@@ -382,26 +385,34 @@ with tab_predict:
         pred_selected_back = block_cols[1].multiselect("后区区块", back_labels, default=back_labels, key="tab4_back")
 
         adv_cols = st.columns(3)
+        # 使用优化后的默认值：top_n_blocks=5
         top_n_blocks_future = adv_cols[0].number_input(
-            "前区仅用前N区块", min_value=3, max_value=7, value=4, key="tab4_top_n_blocks"
+            "前区仅用前N区块", min_value=3, max_value=7, value=5, key="tab4_top_n_blocks"
         )
+        # 使用优化后的默认值：max_per_block=2
         max_per_block_future = adv_cols[1].number_input("每区块最多取", 1, 5, 2, key="tab4_max_per_block")
+        # 使用优化后的默认值：random_blocks_count=4
         random_blocks_count_future = adv_cols[2].number_input(
-            "每期随机区块数", 1, len(front_labels), min(3, len(front_labels)), key="tab4_random_blocks_count"
+            "每期随机区块数", 1, len(front_labels), 4, key="tab4_random_blocks_count"
         )
 
         adv_back_cols = st.columns(2)
+        # 使用优化后的默认值：random_back_blocks_count=1
         random_back_blocks_count_future = adv_back_cols[0].number_input(
-            "后区随机区块数", 1, len(back_labels), min(2, len(back_labels)), key="tab4_random_back_blocks_count"
+            "后区随机区块数", 1, len(back_labels), 1, key="tab4_random_back_blocks_count"
         )
+        # 使用优化后的默认值：span=1
         span = adv_back_cols[1].slider("EWMA span", 1, 5, 1, key="tab4_span")
 
     with st.expander("🧹 排除与回测设置", expanded=False):
+        # 使用优化后的默认值：exclude_top_n=False
         exclude_top_n = st.checkbox("排除近期高频号码", value=False, key="tab4_exclude_top_n")
         exclusion_cols = st.columns(2)
+        # 使用优化后的默认值：exclude_front_n=3
         exclude_top_front_n = exclusion_cols[0].number_input(
             "前区排除数量", 0, 10, 3, key="tab4_exclude_front_n"
         )
+        # 使用优化后的默认值：exclude_back_n=2
         exclude_top_back_n = exclusion_cols[1].number_input(
             "后区排除数量", 0, 5, 2, key="tab4_exclude_back_n"
         )
@@ -641,7 +652,270 @@ with tab_predict:
         )
 
 
-
-
-
+# --------------------- Tab5: AI优化与模型训练 ---------------------
+with tab_ai:
+    st.header("🤖 AI优化与模型训练")
+    st.caption("通过机器学习模型和自动参数优化，提高高金额奖项命中率并保本。")
+    
+    # 定义必要的辅助函数和变量（与tab_predict保持一致）
+    PRIZE_RULES_AI = [
+        ("一等奖", lambda fc,bc: fc==5 and bc==2),
+        ("二等奖", lambda fc,bc: fc==5 and bc==1),
+        ("三等奖", lambda fc,bc: fc==5 and bc==0),
+        ("四等奖", lambda fc,bc: fc>=4 and bc==2),
+        ("五等奖", lambda fc,bc: fc>=4 and bc==1),
+        ("六等奖", lambda fc,bc: fc>=3 and bc==2),
+        ("七等奖", lambda fc,bc: fc>=4 and bc==0),
+        ("八等奖", lambda fc,bc: (fc>=3 and bc>=1) or (fc==2 and bc==2)),
+        ("九等奖", lambda fc,bc: (fc>=3) or (fc==1 and bc==2) or (fc==2 and bc==1) or (bc==2))
+    ]
+    
+    def check_prize_ai(fc, bc, win_fc, win_bc):
+        fc_match = len(set(fc)&set(win_fc))
+        bc_match = len(set(bc)&set(win_bc))
+        for name, cond in PRIZE_RULES_AI:
+            if cond(fc_match, bc_match):
+                return name
+        return "未中奖"
+    
+    # 默认参数（可从session state或用户输入获取）
+    predict_rules_ai = {
+        "sum_front_range": [0, 999],
+        "odd_even_front": [0, 5],
+        "front_include": [],
+        "front_exclude": [],
+        "back_include": [],
+        "back_exclude": [],
+        "consecutive_count": 0,
+        "consecutive_mode": "min"
+    }
+    
+    PRIZE_PAYOUT_DEFAULT_AI = {
+        "一等奖": 5000000.0,
+        "二等奖": 1500000.0,
+        "三等奖": 10000.0,
+        "四等奖": 3000.0,
+        "五等奖": 300.0,
+        "六等奖": 200.0,
+        "七等奖": 100.0,
+        "八等奖": 15.0,
+        "九等奖": 5.0
+    }
+    
+    ai_tabs = st.tabs(["🧠 模型训练", "🔍 参数优化", "📊 策略对比"])
+    
+    with ai_tabs[0]:
+        st.subheader("机器学习模型训练")
+        st.write("训练LightGBM/XGBoost模型预测号码出现概率")
+        
+        model_type = st.selectbox("模型类型", ["lightgbm", "xgboost", "frequency"], key="ai_model_type")
+        train_window = st.number_input("训练数据窗口（期数）", 50, 1000, 200, key="ai_train_window")
+        
+        if st.button("开始训练模型", key="ai_train_btn"):
+            try:
+                from backend.ml_predictor import create_ml_predictor
+                from backend.features import extract_all_features
+                
+                train_df = df_filtered.sort_values("date", ascending=True).tail(train_window)
+                train_df = extract_all_features(train_df)
+                
+                predictor = create_ml_predictor(model_type=model_type if model_type != "frequency" else "lightgbm")
+                
+                if model_type != "frequency":
+                    with st.spinner("训练中..."):
+                        predictor.train_front_model(train_df, target_col="f1")
+                    st.success(f"{model_type.upper()} 模型训练完成！")
+                else:
+                    st.info("使用频率模型（无需训练）")
+                
+                # 保存到session state
+                st.session_state['ml_predictor'] = predictor
+                st.session_state['model_type'] = model_type
+                
+            except ImportError as e:
+                st.error(f"缺少依赖库：{e}。请运行 pip install lightgbm xgboost")
+            except Exception as e:
+                st.error(f"训练失败：{e}")
+    
+    with ai_tabs[1]:
+        st.subheader("自动参数优化")
+        st.write("使用遗传算法自动寻找最优策略参数，最大化ROI和高奖命中率")
+        
+        opt_method = st.selectbox("优化方法", ["遗传算法", "随机搜索"], key="ai_opt_method")
+        opt_generations = st.number_input("迭代代数", 5, 50, 10, key="ai_opt_generations")
+        opt_population = st.number_input("种群大小", 10, 50, 20, key="ai_opt_population")
+        opt_backtest_n = st.number_input("优化回测期数", 10, 100, 30, key="ai_opt_backtest_n")
+        
+        # 目标函数选择
+        opt_target = st.radio(
+            "优化目标",
+            ["最大化ROI", "最大化高奖命中率（一等奖+二等奖）", "平衡ROI和高奖"],
+            key="ai_opt_target"
+        )
+        
+        if st.button("开始优化", key="ai_opt_btn"):
+            try:
+                from backend.optimizer import genetic_algorithm_optimize, StrategyParams
+                import time
+                
+                # 优化参数设置
+                opt_ticket_cost = st.session_state.get('tab4_ticket_cost', 3.0)
+                opt_pred_count = st.session_state.get('tab4_pred_count', 5)
+                opt_prize_amounts = {}
+                for name, default_val in PRIZE_PAYOUT_DEFAULT_AI.items():
+                    opt_prize_amounts[name] = st.session_state.get(f'prize_amount_{name}', default_val)
+                
+                # 定义适应度函数
+                def fitness_function(params: StrategyParams) -> float:
+                    """计算策略参数的适应度分数"""
+                    try:
+                        # 使用参数进行回测
+                        history_df = df_filtered.sort_values("date", ascending=False).head(opt_backtest_n).reset_index(drop=True)
+                        
+                        total_cost = 0.0
+                        total_return = 0.0
+                        high_prize_count = 0
+                        total_bets = 0
+                        
+                        for idx, row in history_df.iterrows():
+                            recent_window_dyn = build_history_window(
+                                df_filtered,
+                                recent_n=params.recent_n,
+                                cutoff_date=row["date"]
+                            )
+                            
+                            generation_context_dyn = prepare_generation_context(
+                                df_window=recent_window_dyn,
+                                span=params.span,
+                                front_blocks_labels=front_labels,
+                                back_blocks_labels=back_labels,
+                                selected_front_blocks=front_labels,
+                                selected_back_blocks=back_labels,
+                            )
+                            
+                            exclude_front_dyn, exclude_back_dyn = compute_exclusions(
+                                generation_context_dyn["front_freq_map"],
+                                generation_context_dyn["back_freq_map"],
+                                params.exclude_top_n,
+                                params.exclude_front_n,
+                                params.exclude_back_n
+                            )
+                            
+                            rules_opt = assemble_rules(
+                                base_rules=predict_rules_ai,
+                                min_consec=params.min_consec,
+                                min_odd=params.min_odd,
+                                exclude_front=exclude_front_dyn,
+                                exclude_back=exclude_back_dyn,
+                                top_n_blocks=params.top_n_blocks,
+                                max_per_block=params.max_per_block,
+                                random_blocks_count=params.random_blocks_count,
+                                random_back_blocks_count=params.random_back_blocks_count
+                            )
+                            
+                            gen = genmod.gen_numbers(
+                                count=opt_pred_count,
+                                rules=rules_opt,
+                                front_blocks=generation_context_dyn["front_blocks"],
+                                back_blocks=generation_context_dyn["back_blocks"],
+                                front_weights=generation_context_dyn["front_weights"],
+                                back_weights=generation_context_dyn["back_weights"],
+                                selected_front_blocks=front_labels,
+                                selected_back_blocks=back_labels
+                            )
+                            
+                            # 计算收益
+                            for c in gen:
+                                prize_name = check_prize_ai(
+                                    c["front"], c["back"],
+                                    row[["f1", "f2", "f3", "f4", "f5"]],
+                                    row[["b1", "b2"]]
+                                )
+                                total_cost += opt_ticket_cost
+                                total_return += opt_prize_amounts.get(prize_name, 0.0)
+                                if prize_name in ["一等奖", "二等奖"]:
+                                    high_prize_count += 1
+                                total_bets += 1
+                        
+                        # 计算分数
+                        roi = (total_return - total_cost) / total_cost if total_cost > 0 else -1.0
+                        high_prize_rate = high_prize_count / total_bets if total_bets > 0 else 0.0
+                        
+                        if opt_target == "最大化ROI":
+                            score = roi * 1000  # 放大以便优化
+                        elif opt_target == "最大化高奖命中率（一等奖+二等奖）":
+                            score = high_prize_rate * 10000
+                        else:  # 平衡
+                            score = (roi * 500) + (high_prize_rate * 5000)
+                        
+                        # 保本约束：如果ROI<0，大幅惩罚
+                        if roi < 0:
+                            score -= 10000
+                        
+                        return score
+                    except Exception as e:
+                        return float('-inf')
+                
+                # 参数范围
+                param_ranges = {
+                    "recent_n": (1, 20),
+                    "span": (1, 5),
+                    "top_n_blocks": (3, 7),
+                    "max_per_block": (1, 3),
+                    "random_blocks_count": (2, 5),
+                    "random_back_blocks_count": (1, 3),
+                    "min_consec": (0, 2),
+                    "min_odd": (1, 4),
+                }
+                
+                with st.spinner(f"优化中（{opt_generations}代，每代{opt_population}个个体）..."):
+                    if opt_method == "遗传算法":
+                        best_params, best_score = genetic_algorithm_optimize(
+                            fitness_function,
+                            param_ranges,
+                            population_size=opt_population,
+                            generations=opt_generations
+                        )
+                    else:
+                        from backend.optimizer import bayesian_optimize
+                        best_params, best_score = bayesian_optimize(
+                            fitness_function,
+                            param_ranges,
+                            n_iterations=opt_generations * opt_population
+                        )
+                
+                st.success("优化完成！")
+                st.subheader("最优参数")
+                st.json({
+                    "recent_n": best_params.recent_n,
+                    "span": best_params.span,
+                    "top_n_blocks": best_params.top_n_blocks,
+                    "max_per_block": best_params.max_per_block,
+                    "random_blocks_count": best_params.random_blocks_count,
+                    "random_back_blocks_count": best_params.random_back_blocks_count,
+                    "min_consec": best_params.min_consec,
+                    "min_odd": best_params.min_odd,
+                    "exclude_top_n": best_params.exclude_top_n,
+                    "exclude_front_n": best_params.exclude_front_n,
+                    "exclude_back_n": best_params.exclude_back_n,
+                    "适应度分数": f"{best_score:.2f}"
+                })
+                
+                # 保存到session state
+                st.session_state['optimized_params'] = best_params
+                
+            except Exception as e:
+                st.error(f"优化失败：{e}")
+                import traceback
+                st.code(traceback.format_exc())
+    
+    with ai_tabs[2]:
+        st.subheader("策略对比分析")
+        st.write("对比不同策略参数的回测表现")
+        
+        if 'optimized_params' in st.session_state:
+            st.info("检测到已优化的参数，可以在'未来号码预测'标签页中使用。")
+        
+        if st.button("运行策略对比", key="ai_compare_btn"):
+            st.info("策略对比功能开发中，将显示多个策略的ROI、中奖率等指标对比图表。")
 
