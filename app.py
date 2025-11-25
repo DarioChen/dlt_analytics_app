@@ -566,40 +566,39 @@ with tab_predict:
             if use_ai_model:
                 st.info(f"🤖 使用AI模型（{st.session_state.get('model_type', 'unknown')}）生成")
             
-            # 可视化：号码分布热力图
-            st.subheader("📊 预测号码分布可视化")
-            
-            # 前区号码分布
-            front_nums_all = []
-            for c in cands:
-                front_nums_all.extend(c["front"])
-            front_counts = pd.Series(front_nums_all).value_counts().sort_index()
-            
-            back_nums_all = []
-            for c in cands:
-                back_nums_all.extend(c["back"])
-            back_counts = pd.Series(back_nums_all).value_counts().sort_index()
-            
-            viz_cols = st.columns(2)
-            with viz_cols[0]:
-                st.write("**前区号码出现频次**")
-                fig_front_dist = px.bar(
-                    x=front_counts.index, 
-                    y=front_counts.values,
-                    labels={"x": "号码", "y": "出现次数"},
-                    title="前区号码分布"
-                )
-                st.plotly_chart(fig_front_dist, use_container_width=True)
-            
-            with viz_cols[1]:
-                st.write("**后区号码出现频次**")
-                fig_back_dist = px.bar(
-                    x=back_counts.index,
-                    y=back_counts.values,
-                    labels={"x": "号码", "y": "出现次数"},
-                    title="后区号码分布"
-                )
-                st.plotly_chart(fig_back_dist, use_container_width=True)
+            # 可视化：号码分布热力图 - 使用折叠面板
+            with st.expander("📊 预测号码分布可视化（点击展开/折叠）"):
+                # 前区号码分布
+                front_nums_all = []
+                for c in cands:
+                    front_nums_all.extend(c["front"])
+                front_counts = pd.Series(front_nums_all).value_counts().sort_index()
+                
+                back_nums_all = []
+                for c in cands:
+                    back_nums_all.extend(c["back"])
+                back_counts = pd.Series(back_nums_all).value_counts().sort_index()
+                
+                viz_cols = st.columns(2)
+                with viz_cols[0]:
+                    st.write("**前区号码出现频次**")
+                    fig_front_dist = px.bar(
+                        x=front_counts.index, 
+                        y=front_counts.values,
+                        labels={"x": "号码", "y": "出现次数"},
+                        title="前区号码分布"
+                    )
+                    st.plotly_chart(fig_front_dist, use_container_width=True)
+                
+                with viz_cols[1]:
+                    st.write("**后区号码出现频次**")
+                    fig_back_dist = px.bar(
+                        x=back_counts.index,
+                        y=back_counts.values,
+                        labels={"x": "号码", "y": "出现次数"},
+                        title="后区号码分布"
+                    )
+                    st.plotly_chart(fig_back_dist, use_container_width=True)
             
             # 显示详细表格
             st.subheader("📋 详细预测号码")
@@ -609,7 +608,7 @@ with tab_predict:
     if backtest_n > 0:
         st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
         history_df = df_filtered.sort_values("date", ascending=False).head(backtest_n).reset_index(drop=True)
-
+        
         PRIZE_RULES = [
             ("一等奖", lambda fc,bc: fc==5 and bc==2),
             ("二等奖", lambda fc,bc: fc==5 and bc==1),
@@ -747,7 +746,6 @@ with tab_predict:
             f"{roi*100:.1f}%",
             delta=f"共 {total_bets_all} 注"
         )
-
 
 # --------------------- Tab5: AI优化与模型训练 ---------------------
 with tab_ai:
