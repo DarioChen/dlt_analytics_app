@@ -5,6 +5,10 @@ import numpy as np
 import plotly.express as px
 import random
 import math
+import os
+import shutil
+import json
+from datetime import datetime
 from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv, sync_remote_history
 from backend.analysis import dataframe_from_draws
@@ -15,6 +19,73 @@ import io
 
 st.set_page_config(page_title="大乐透分析与选号 v1.5", page_icon="🎯", layout="wide")
 st.title("🎯 大乐透分析与选号（本地版） v1.5 — 含未来预测")
+
+# --------------------- 策略管理相关功能 ---------------------  
+def ensure_strategies_dir():
+    """确保策略存储目录存在"""
+    strategies_dir = os.path.join(os.path.dirname(__file__), 'strategies')
+    if not os.path.exists(strategies_dir):
+        os.makedirs(strategies_dir)
+    return strategies_dir
+
+
+def get_saved_strategies():
+    """获取所有保存的策略列表"""
+    strategies_dir = ensure_strategies_dir()
+    strategies = []
+    for filename in os.listdir(strategies_dir):
+        if filename.endswith('.json'):
+            try:
+                with open(os.path.join(strategies_dir, filename), 'r', encoding='utf-8') as f:
+                    strategy = json.load(f)
+                    strategy['filename'] = filename
+                    strategies.append(strategy)
+            except:
+                continue
+    return strategies
+
+
+def save_strategy(name, params):
+    """保存策略参数"""
+    strategies_dir = ensure_strategies_dir()
+    # 确保文件名安全
+    safe_name = ''.join(c if c.isalnum() or c in '_-' else '_' for c in name)
+    filename = f"{safe_name}.json"
+    
+    # 构建策略数据
+    strategy = {
+        'name': name,
+        'params': params,
+        'created_at': datetime.now().isoformat(),
+        'updated_at': datetime.now().isoformat()
+    }
+    
+    # 保存到文件
+    with open(os.path.join(strategies_dir, filename), 'w', encoding='utf-8') as f:
+        json.dump(strategy, f, ensure_ascii=False, indent=2)
+    
+    return filename
+
+
+def load_strategy(filename):
+    """加载策略参数"""
+    strategies_dir = ensure_strategies_dir()
+    file_path = os.path.join(strategies_dir, filename)
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            strategy = json.load(f)
+            return strategy['params']
+    return None
+
+
+def delete_strategy(filename):
+    """删除策略文件"""
+    strategies_dir = ensure_strategies_dir()
+    file_path = os.path.join(strategies_dir, filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        return True
+    return False
 
 # --------------------- 数据筛选器（全局） ---------------------
 st.sidebar.header("🔎 数据筛选器（全局）")
@@ -442,6 +513,69 @@ with tab_predict:
         if use_ai_model and ml_predictor is None:
             st.warning("⚠️ 未检测到训练好的AI模型，请在'AI优化与模型训练'标签页先训练模型。")
             use_ai_model = False
+        
+        # 策略管理
+        with st.expander("💾 策略管理", expanded=False):
+            st.write("管理您的预测策略")
+            
+            # 保存当前设置为策略
+            st.subheader("保存当前设置")
+            strategy_name = st.text_input("策略名称", value="", placeholder="请输入策略名称", key="strategy_name_input")
+            
+            # 保存按钮
+            save_col1, save_col2 = st.columns([1, 1])
+            with save_col1:
+                if st.button("保存策略", key="save_strategy_btn", type="primary"):
+                    if not strategy_name.strip():
+                        st.error("策略名称不能为空")
+                    else:
+                        # 收集当前设置的所有参数
+                        current_params = {
+                            'use_recent_n': use_recent_n,
+                            'pred_count': pred_count,
+                            'min_consec': min_consec,
+                            'min_odd': min_odd,
+                            'pred_selected_front': pred_selected_front,
+                            'pred_selected_back': pred_selected_back,
+                            'top_n_blocks_future': top_n_blocks_future,
+                            'max_per_block_future': max_per_block_future,
+                            'random_blocks_count_future': random_blocks_count_future,
+                            'random_back_blocks_count_future': random_back_blocks_count_future,
+                            'span': span,
+                            'exclude_top_n': exclude_top_n,
+                            'exclude_top_front_n': exclude_top_front_n,
+                            'exclude_top_back_n': exclude_top_back_n,
+                            'backtest_n': backtest_n,
+                            'ticket_cost': ticket_cost,
+                            'prize_amounts': prize_amounts,
+                            'use_ai_model': use_ai_model
+                        }
+                        
+                        # 保存策略
+                        save_strategy(strategy_name, current_params)
+                        st.success(f"✅ 策略 '{strategy_name}' 保存成功")
+                        # 重新加载策略列表
+                        st.rerun()
+            
+            # 删除策略
+            st.subheader("删除策略")
+            strategies = get_saved_strategies()
+            if strategies:
+                delete_options = {s['name']: s['filename'] for s in strategies}
+                delete_selection = st.selectbox(
+                    "选择要删除的策略",
+                    list(delete_options.keys()),
+                    key="delete_strategy_select"
+                )
+                
+                with save_col2:
+                    if st.button("删除策略", key="delete_strategy_btn", type="secondary"):
+                        if delete_strategy(delete_options[delete_selection]):
+                            st.success(f"✅ 策略 '{delete_selection}' 已删除")
+                            # 重新加载策略列表
+                            st.rerun()
+            else:
+                st.info("暂无保存的策略")
     
     # ----------------- 基线历史窗口 & 生成上下文 -----------------
     recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
@@ -512,9 +646,41 @@ with tab_predict:
         exclude_top_back_n
     )
 
-    # ----------------- 右侧主区域：生成按钮和结果显示 -----------------
-    # 生成按钮 - 突出显示在主区域顶部
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # ----------------- 右侧主区域：策略选择、生成按钮和结果显示 -----------------
+    # 初始化当前选中的策略
+    if 'selected_strategy' not in st.session_state:
+        st.session_state.selected_strategy = None
+    
+    # 生成按钮和策略选择 - 突出显示在主区域顶部
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        # 获取保存的策略列表
+        strategies = get_saved_strategies()
+        if strategies:
+            strategy_options = {s['name']: s['filename'] for s in strategies}
+            strategy_names = ['自定义设置'] + list(strategy_options.keys())
+            strategy_selection = st.selectbox(
+                "🔧 选择生成策略", 
+                strategy_names,
+                index=0,
+                key="tab4_strategy_select"
+            )
+            
+            # 如果选择了非默认策略，更新session_state
+            if strategy_selection != '自定义设置':
+                st.session_state.selected_strategy = strategy_options[strategy_selection]
+            else:
+                st.session_state.selected_strategy = None
+        else:
+            st.selectbox(
+                "🔧 选择生成策略", 
+                ['自定义设置'],
+                disabled=True,
+                key="tab4_strategy_select"
+            )
+            st.caption("暂无保存的策略，请在预测设置中保存策略")
+    
     with col2:
         generate_button = st.button(
             "生成未来预测号码", 
@@ -524,6 +690,49 @@ with tab_predict:
         )
     
     if generate_button:
+        # 检查是否有选中的策略
+        if st.session_state.selected_strategy:
+            # 加载策略参数
+            strategy_params = load_strategy(st.session_state.selected_strategy)
+            if strategy_params:
+                st.info(f"🔧 使用策略参数生成号码")
+                
+                # 从策略中获取参数
+                use_recent_n = strategy_params.get('use_recent_n', use_recent_n)
+                pred_count = strategy_params.get('pred_count', pred_count)
+                min_consec = strategy_params.get('min_consec', min_consec)
+                min_odd = strategy_params.get('min_odd', min_odd)
+                pred_selected_front = strategy_params.get('pred_selected_front', pred_selected_front)
+                pred_selected_back = strategy_params.get('pred_selected_back', pred_selected_back)
+                top_n_blocks_future = strategy_params.get('top_n_blocks_future', top_n_blocks_future)
+                max_per_block_future = strategy_params.get('max_per_block_future', max_per_block_future)
+                random_blocks_count_future = strategy_params.get('random_blocks_count_future', random_blocks_count_future)
+                random_back_blocks_count_future = strategy_params.get('random_back_blocks_count_future', random_back_blocks_count_future)
+                span = strategy_params.get('span', span)
+                exclude_top_n = strategy_params.get('exclude_top_n', exclude_top_n)
+                exclude_top_front_n = strategy_params.get('exclude_top_front_n', exclude_top_front_n)
+                exclude_top_back_n = strategy_params.get('exclude_top_back_n', exclude_top_back_n)
+                use_ai_model = strategy_params.get('use_ai_model', use_ai_model)
+                
+                # 使用更新后的参数重新计算上下文和排除号码
+                recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
+                generation_context = prepare_generation_context(
+                    df_window=recent_window,
+                    span=span,
+                    front_blocks_labels=front_labels,
+                    back_blocks_labels=back_labels,
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back,
+                )
+                exclude_front, exclude_back = compute_exclusions(
+                    generation_context["front_freq_map"],
+                    generation_context["back_freq_map"],
+                    exclude_top_n,
+                    exclude_top_front_n,
+                    exclude_top_back_n
+                )
+        
+        # 组装规则并生成号码
         rules_future = assemble_rules(
             base_rules=predict_rules,
             min_consec=min_consec,

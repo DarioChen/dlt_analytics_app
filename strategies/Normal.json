@@ -1,0 +1,50 @@
+{
+  "name": "Normal",
+  "params": {
+    "use_recent_n": 2,
+    "pred_count": 5,
+    "min_consec": 0,
+    "min_odd": 2,
+    "pred_selected_front": [
+      "1-5",
+      "6-10",
+      "11-15",
+      "16-20",
+      "21-25",
+      "26-30",
+      "31-35"
+    ],
+    "pred_selected_back": [
+      "1-2",
+      "3-4",
+      "5-6",
+      "7-8",
+      "9-10",
+      "11-12"
+    ],
+    "top_n_blocks_future": 4,
+    "max_per_block_future": 2,
+    "random_blocks_count_future": 4,
+    "random_back_blocks_count_future": 3,
+    "span": 1,
+    "exclude_top_n": false,
+    "exclude_top_front_n": 3,
+    "exclude_top_back_n": 2,
+    "backtest_n": 10,
+    "ticket_cost": 3.0,
+    "prize_amounts": {
+      "一等奖": 5000000.0,
+      "二等奖": 1500000.0,
+      "三等奖": 10000.0,
+      "四等奖": 3000.0,
+      "五等奖": 300.0,
+      "六等奖": 200.0,
+      "七等奖": 100.0,
+      "八等奖": 15.0,
+      "九等奖": 5.0
+    },
+    "use_ai_model": false
+  },
+  "created_at": "2025-11-25T15:03:07.929167",
+  "updated_at": "2025-11-25T15:03:07.929167"
+}
