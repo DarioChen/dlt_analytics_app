@@ -356,9 +356,6 @@ with tab_generate:
 
 # --------------------- Tab4: 未来号码预测 + 历史回测（优化版） ---------------------
 with tab_predict:
-    st.header("🔮 冷热权重预测 & 回测")
-    st.caption("基于历史开奖动态权重生成候选号码，并可回测最近若干期命中情况。")
-
     # ----------------- 全局规则 -----------------
     predict_rules = {
         "sum_front_range": [0, 999],
@@ -371,72 +368,65 @@ with tab_predict:
         "consecutive_mode": "min"
     }
 
-    with st.expander("🎯 预测参数", expanded=True):
-        base_cols = st.columns(4)
-        # 使用优化后的默认值：recent_n=3
-        use_recent_n = base_cols[0].number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
-        pred_count = base_cols[1].number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
-        # 使用优化后的默认值：min_consec=0
-        min_consec = base_cols[2].number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
-        # 使用优化后的默认值：min_odd=2
-        min_odd = base_cols[3].number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
+    # 左侧边栏：参数设置
+    with st.sidebar:
+        st.subheader("🎯 预测设置")
+        
+        # 预测参数
+        with st.expander("🎯 预测参数", expanded=True):
+            # 基本参数 - 使用更小的列布局适配侧边栏
+            use_recent_n = st.number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
+            pred_count = st.number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
+            min_consec = st.number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
+            min_odd = st.number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
 
-        block_cols = st.columns(2)
-        pred_selected_front = block_cols[0].multiselect("前区区块", front_labels, default=front_labels, key="tab4_front")
-        pred_selected_back = block_cols[1].multiselect("后区区块", back_labels, default=back_labels, key="tab4_back")
+            # 区块选择
+            pred_selected_front = st.multiselect("前区区块", front_labels, default=front_labels, key="tab4_front")
+            pred_selected_back = st.multiselect("后区区块", back_labels, default=back_labels, key="tab4_back")
 
-        adv_cols = st.columns(3)
-        # 使用优化后的默认值：top_n_blocks=5
-        top_n_blocks_future = adv_cols[0].number_input(
-            "前区仅用前N区块", min_value=3, max_value=7, value=4, key="tab4_top_n_blocks"
-        )
-        # 使用优化后的默认值：max_per_block=2
-        max_per_block_future = adv_cols[1].number_input("每区块最多取", 1, 5, 2, key="tab4_max_per_block")
-        # 使用优化后的默认值：random_blocks_count=4
-        random_blocks_count_future = adv_cols[2].number_input(
-            "每期随机区块数", 1, len(front_labels), 4, key="tab4_random_blocks_count"
-        )
+            # 高级参数
+            top_n_blocks_future = st.number_input(
+                "前区仅用前N区块", min_value=3, max_value=7, value=4, key="tab4_top_n_blocks"
+            )
+            max_per_block_future = st.number_input("每区块最多取", 1, 5, 2, key="tab4_max_per_block")
+            random_blocks_count_future = st.number_input(
+                "每期随机区块数", 1, len(front_labels), 4, key="tab4_random_blocks_count"
+            )
+            random_back_blocks_count_future = st.number_input(
+                "后区随机区块数", 1, len(back_labels), 3, key="tab4_random_back_blocks_count"
+            )
+            span = st.slider("EWMA span", 1, 5, 1, key="tab4_span")
 
-        adv_back_cols = st.columns(2)
-        # 使用优化后的默认值：random_back_blocks_count=1
-        random_back_blocks_count_future = adv_back_cols[0].number_input(
-            "后区随机区块数", 1, len(back_labels), 3, key="tab4_random_back_blocks_count"
-        )
-        # 使用优化后的默认值：span=1
-        span = adv_back_cols[1].slider("EWMA span", 1, 5, 1, key="tab4_span")
-
-    with st.expander("🧹 排除与回测设置", expanded=False):
-        # 使用优化后的默认值：exclude_top_n=False
-        exclude_top_n = st.checkbox("排除近期高频号码", value=False, key="tab4_exclude_top_n")
-        exclusion_cols = st.columns(2)
-        # 使用优化后的默认值：exclude_front_n=3
-        exclude_top_front_n = exclusion_cols[0].number_input(
-            "前区排除数量", 0, 10, 3, key="tab4_exclude_front_n"
-        )
-        # 使用优化后的默认值：exclude_back_n=2
-        exclude_top_back_n = exclusion_cols[1].number_input(
-            "后区排除数量", 0, 5, 2, key="tab4_exclude_back_n"
-        )
-        backtest_n = st.number_input("回测历史期数（0=不回测）", 0, 500, 10, key="tab4_backtest_n")
-        st.caption("建议调小 N 和区块数量以提升生成速度。")
-    with st.expander("💰 成本与奖金参数", expanded=False):
-        ticket_cost = st.number_input("单注投注金额（元）", 1.0, 20.0, 3.0, 0.5, key="tab4_ticket_cost")
-        st.caption("大乐透普通投注为 3 元/注，根据实际玩法调整。")
-        PRIZE_PAYOUT_DEFAULT = {
-            "一等奖": 5000000.0,
-            "二等奖": 1500000.0,
-            "三等奖": 10000.0,
-            "四等奖": 3000.0,
-            "五等奖": 300.0,
-            "六等奖": 200.0,
-            "七等奖": 100.0,
-            "八等奖": 15.0,
-            "九等奖": 5.0
-        }
-        prize_amounts = {}
-        prize_cols = st.columns(3)
-        for idx, (name, default_val) in enumerate(PRIZE_PAYOUT_DEFAULT.items()):
-            with prize_cols[idx % 3]:
+        # 排除与回测设置
+        with st.expander("🧹 排除与回测设置", expanded=False):
+            exclude_top_n = st.checkbox("排除近期高频号码", value=False, key="tab4_exclude_top_n")
+            exclude_top_front_n = st.number_input(
+                "前区排除数量", 0, 10, 3, key="tab4_exclude_front_n"
+            )
+            exclude_top_back_n = st.number_input(
+                "后区排除数量", 0, 5, 2, key="tab4_exclude_back_n"
+            )
+            backtest_n = st.number_input("回测历史期数（0=不回测）", 0, 500, 10, key="tab4_backtest_n")
+            st.caption("建议调小 N 和区块数量以提升生成速度。")
+        
+        # 成本与奖金参数
+        with st.expander("💰 成本与奖金参数", expanded=False):
+            ticket_cost = st.number_input("单注投注金额（元）", 1.0, 20.0, 3.0, 0.5, key="tab4_ticket_cost")
+            st.caption("大乐透普通投注为 3 元/注，根据实际玩法调整。")
+            PRIZE_PAYOUT_DEFAULT = {
+                "一等奖": 5000000.0,
+                "二等奖": 1500000.0,
+                "三等奖": 10000.0,
+                "四等奖": 3000.0,
+                "五等奖": 300.0,
+                "六等奖": 200.0,
+                "七等奖": 100.0,
+                "八等奖": 15.0,
+                "九等奖": 5.0
+            }
+            prize_amounts = {}
+            # 侧边栏单列显示奖金设置
+            for idx, (name, default_val) in enumerate(PRIZE_PAYOUT_DEFAULT.items()):
                 prize_amounts[name] = st.number_input(
                     f"{name}估值（元）",
                     0.0,
@@ -446,12 +436,12 @@ with tab_predict:
                     key=f"prize_amount_{name}"
                 )
 
-    # ----------------- 检查是否使用AI模型 -----------------
-    use_ai_model = st.checkbox("使用AI模型预测（需先训练模型）", value=False, key="tab4_use_ai")
-    ml_predictor = st.session_state.get('ml_predictor', None)
-    if use_ai_model and ml_predictor is None:
-        st.warning("⚠️ 未检测到训练好的AI模型，请在'AI优化与模型训练'标签页先训练模型。")
-        use_ai_model = False
+        # AI模型设置
+        use_ai_model = st.checkbox("使用AI模型预测（需先训练模型）", value=False, key="tab4_use_ai")
+        ml_predictor = st.session_state.get('ml_predictor', None)
+        if use_ai_model and ml_predictor is None:
+            st.warning("⚠️ 未检测到训练好的AI模型，请在'AI优化与模型训练'标签页先训练模型。")
+            use_ai_model = False
     
     # ----------------- 基线历史窗口 & 生成上下文 -----------------
     recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
@@ -522,8 +512,18 @@ with tab_predict:
         exclude_top_back_n
     )
 
-    # ----------------- 生成未来预测号码 -----------------
-    if st.button("生成未来预测号码", key="tab4_gen_future"):
+    # ----------------- 右侧主区域：生成按钮和结果显示 -----------------
+    # 生成按钮 - 突出显示在主区域顶部
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        generate_button = st.button(
+            "生成未来预测号码", 
+            key="tab4_gen_future",
+            use_container_width=True,
+            type="primary"
+        )
+    
+    if generate_button:
         rules_future = assemble_rules(
             base_rules=predict_rules,
             min_consec=min_consec,
@@ -562,10 +562,6 @@ with tab_predict:
 
             pred_df = pd.DataFrame(rows)
 
-            st.subheader(f"未来预测结果（共 {len(cands)} 注）")
-            if use_ai_model:
-                st.info(f"🤖 使用AI模型（{st.session_state.get('model_type', 'unknown')}）生成")
-            
             # 可视化：号码分布热力图 - 使用折叠面板
             with st.expander("📊 预测号码分布可视化（点击展开/折叠）"):
                 # 前区号码分布
@@ -599,14 +595,49 @@ with tab_predict:
                         title="后区号码分布"
                     )
                     st.plotly_chart(fig_back_dist, use_container_width=True)
-            
-            # 显示详细表格
-            st.subheader("📋 详细预测号码")
-            st.dataframe(pred_df, use_container_width=False)
 
-    # ----------------- 历史回测 -----------------
-    if backtest_n > 0:
-        st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
+    # 使用Tabs布局显示未来预测和历史回测
+    if (generate_button and len(cands) > 0) or backtest_n > 0:
+        result_tabs = st.tabs(["🔮 未来预测号码", "📊 历史回测结果"])
+        
+        # 未来预测号码Tab
+        with result_tabs[0]:
+            if generate_button and len(cands) > 0:
+                if use_ai_model:
+                    st.info(f"🤖 使用AI模型（{st.session_state.get('model_type', 'unknown')}）生成")
+                
+                # 使用表格形式显示
+                with st.container():
+                    st.dataframe(
+                        pred_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "预测序号": st.column_config.NumberColumn(
+                                "预测序号",
+                                format="%d",
+                            ),
+                            "预测前区": st.column_config.Column(
+                                "预测前区",
+                                width="medium",
+                            ),
+                            "预测后区": st.column_config.Column(
+                                "预测后区",
+                                width="small",
+                            ),
+                            "中奖情况": st.column_config.Column(
+                                "中奖情况",
+                                width="small",
+                            ),
+                        }
+                    )
+            else:
+                st.info("请点击'生成未来预测号码'按钮以查看预测结果")
+        
+        # 历史回测结果Tab
+        with result_tabs[1]:
+            if backtest_n > 0:
+                st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
         history_df = df_filtered.sort_values("date", ascending=False).head(backtest_n).reset_index(drop=True)
         
         PRIZE_RULES = [
