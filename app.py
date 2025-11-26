@@ -682,6 +682,8 @@ with tab_predict:
             st.caption("暂无保存的策略，请在预测设置中保存策略")
     
     with col2:
+        # 添加空标签以保持与selectbox标签对齐
+        st.markdown("", unsafe_allow_html=True)
         generate_button = st.button(
             "生成未来预测号码", 
             key="tab4_gen_future",
