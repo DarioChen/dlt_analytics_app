@@ -1,4 +1,4 @@
-# app.py (v2.0)
+# app.py (v1.4)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,19 +13,12 @@ from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv, sync_remote_history
 from backend.analysis import dataframe_from_draws
 from backend import generator as genmod
-from backend.optimizer import genetic_algorithm_optimize, bayesian_optimize, get_optimization_methods
-from backend.backtest import BacktestAnalyzer
-from backend.performance_test import PerformanceTester
 from predictor import compute_weights_from_history, prepare_generator_inputs, compute_weights_from_history_ewma
 import random
 import io
 
-st.set_page_config(page_title="大乐透分析与选号 v2.0", page_icon="🎯", layout="wide")
-st.title("🎯 大乐透分析与选号（本地版） v2.0 — 增强优化与性能分析")
-
-# 初始化回测分析器和性能测试器
-backtest_analyzer = BacktestAnalyzer()
-performance_tester = PerformanceTester()
+st.set_page_config(page_title="大乐透分析与选号 v1.5", page_icon="🎯", layout="wide")
+st.title("🎯 大乐透分析与选号（本地版） v1.5 — 含未来预测")
 
 # --------------------- 策略管理相关功能 ---------------------  
 def ensure_strategies_dir():
@@ -1046,7 +1039,7 @@ with tab_ai:
         "九等奖": 5.0
     }
     
-    ai_tabs = st.tabs(["🧠 模型训练", "🔍 参数优化", "📊 批量回测", "⚡ 性能测试"])
+    ai_tabs = st.tabs(["🧠 模型训练", "🔍 参数优化", "📊 策略对比"])
     
     with ai_tabs[0]:
         st.subheader("机器学习模型训练")
@@ -1136,8 +1129,7 @@ with tab_ai:
         st.subheader("自动参数优化")
         st.write("使用遗传算法自动寻找最优策略参数，最大化ROI和高奖命中率")
         
-        optimization_methods = get_optimization_methods()
-        opt_method = st.selectbox("优化方法", list(optimization_methods.keys()), key="ai_opt_method")
+        opt_method = st.selectbox("优化方法", ["遗传算法", "随机搜索"], key="ai_opt_method")
         opt_generations = st.number_input("迭代代数", 5, 50, 10, key="ai_opt_generations")
         opt_population = st.number_input("种群大小", 10, 50, 20, key="ai_opt_population")
         opt_backtest_n = st.number_input("优化回测期数", 10, 100, 30, key="ai_opt_backtest_n")
@@ -1273,12 +1265,11 @@ with tab_ai:
                             generations=opt_generations
                         )
                     else:
-                        algorithm = optimization_methods[opt_method]
+                        from backend.optimizer import bayesian_optimize
                         best_params, best_score = bayesian_optimize(
                             fitness_function,
                             param_ranges,
-                            n_iterations=opt_generations * opt_population,
-                            algorithm=algorithm
+                            n_iterations=opt_generations * opt_population
                         )
                 
                 st.success("优化完成！")
@@ -1601,96 +1592,4 @@ with tab_ai:
                     import traceback
                     with st.expander("查看详细错误"):
                         st.code(traceback.format_exc())
-
-    with ai_tabs[3]:
-        st.subheader("⚡ 系统性能测试")
-        st.write("测试各个组件的性能表现，帮助优化系统效率")
-        
-        # 性能测试选项
-        test_options = st.multiselect(
-            "选择测试组件",
-            ["号码生成器", "参数优化器", "回测分析器", "全流程测试"],
-            default=["号码生成器", "参数优化器", "回测分析器"]
-        )
-        
-        # 测试参数
-        test_runs = st.number_input("测试运行次数", 1, 100, 5, key="perf_test_runs")
-        test_samples = st.number_input("样本数量", 10, 1000, 100, key="perf_test_samples")
-        
-        # 测试对比版本
-        compare_versions = st.checkbox("对比优化前后性能", value=False)
-        
-        if st.button("开始性能测试", key="start_perf_test"):
-            try:
-                with st.spinner("正在执行性能测试..."):
-                    # 准备测试数据
-                    test_df = df_filtered.head(100)
-                    
-                    # 运行性能测试
-                    results = performance_tester.run_all_tests(
-                        test_options=test_options,
-                        runs=test_runs,
-                        samples=test_samples,
-                        data=test_df,
-                        compare_versions=compare_versions
-                    )
-                    
-                    # 显示测试结果
-                    st.success("✅ 性能测试完成！")
-                    
-                    # 总览统计
-                    st.subheader("📊 性能测试结果总览")
-                    
-                    # 各组件性能指标
-                    for component, metrics in results.items():
-                        st.markdown(f"### {component}")
-                        
-                        # 如果是对比模式
-                        if compare_versions and 'before' in metrics and 'after' in metrics:
-                            cols = st.columns(2)
-                            cols[0].markdown("**优化前**")
-                            cols[0].json(metrics['before'])
-                            cols[1].markdown("**优化后**")
-                            cols[1].json(metrics['after'])
-                            
-                            # 计算改进百分比
-                            st.markdown("**性能改进**")
-                            improvement = {}
-                            for key in metrics['before']:
-                                if key != 'test_name':
-                                    before_val = metrics['before'][key]
-                                    after_val = metrics['after'][key]
-                                    if before_val > 0:
-                                        improvement[key] = f"{(before_val - after_val) / before_val * 100:.2f}%"
-                                    else:
-                                        improvement[key] = "∞"
-                            st.json(improvement)
-                        else:
-                            st.json(metrics)
-                    
-                    # 生成性能报告
-                    report = performance_tester.generate_performance_report(results)
-                    st.subheader("📋 性能测试报告")
-                    st.text(report)
-                    
-                    # 提供下载选项
-                    report_bytes = report.encode('utf-8')
-                    st.download_button(
-                        label="下载性能测试报告",
-                        data=report_bytes,
-                        file_name=f"performance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                        mime="text/plain"
-                    )
-                    
-            except Exception as e:
-                st.error(f"性能测试失败：{e}")
-                import traceback
-                with st.expander("查看详细错误"):
-                    st.code(traceback.format_exc())
-
-# 显示系统优化信息
-st.sidebar.markdown("---")
-st.sidebar.subheader("💡 系统优化信息")
-st.sidebar.info("✅ 贝叶斯优化已增强\n✅ 高额奖项命中分析已添加\n✅ 性能测试已集成\n✅ 多算法支持已实现")
-st.sidebar.caption("大乐透分析系统 v2.0 - 智能优化版")
 
