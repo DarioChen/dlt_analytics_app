@@ -458,6 +458,12 @@ with tab_predict:
             min_consec = st.number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
             min_odd = st.number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
 
+            # 多期预测参数
+            multi_period_enabled = st.checkbox("启用多期预测", value=True, key="tab4_multi_period_enabled")
+            future_periods = st.number_input("预测未来期数", 1, 20, 5, key="tab4_future_periods")
+            backtest_gap_periods = st.number_input("回测间隔期数", 1, 20, 5, key="tab4_backtest_gap_periods")
+            st.caption("回测间隔期数：回测时每期使用N期前的开奖数据进行号码生成和结果比对")
+
             # 区块选择
             pred_selected_front = st.multiselect("前区区块", front_labels, default=front_labels, key="tab4_front")
             pred_selected_back = st.multiselect("后区区块", back_labels, default=back_labels, key="tab4_back")
@@ -741,29 +747,69 @@ with tab_predict:
                     exclude_top_back_n
                 )
         
-        # 组装规则并生成号码
-        rules_future = assemble_rules(
-            base_rules=predict_rules,
-            min_consec=min_consec,
-            min_odd=min_odd,
-            exclude_front=exclude_front,
-            exclude_back=exclude_back,
-            top_n_blocks=top_n_blocks_future,
-            max_per_block=max_per_block_future,
-            random_blocks_count=random_blocks_count_future,
-            random_back_blocks_count=random_back_blocks_count_future
-        )
+        # 根据是否启用多期预测决定生成方式
+        if multi_period_enabled:
+            all_period_cands = {}
+            # 生成多期预测号码
+            for period_idx in range(future_periods):
+                # 组装规则并生成号码
+                rules_future = assemble_rules(
+                    base_rules=predict_rules,
+                    min_consec=min_consec,
+                    min_odd=min_odd,
+                    exclude_front=exclude_front,
+                    exclude_back=exclude_back,
+                    top_n_blocks=top_n_blocks_future,
+                    max_per_block=max_per_block_future,
+                    random_blocks_count=random_blocks_count_future,
+                    random_back_blocks_count=random_back_blocks_count_future
+                )
 
-        cands = genmod.gen_numbers(
-            count=pred_count,
-            rules=rules_future,
-            front_blocks=generation_context["front_blocks"],
-            back_blocks=generation_context["back_blocks"],
-            front_weights=generation_context["front_weights"],
-            back_weights=generation_context["back_weights"],
-            selected_front_blocks=pred_selected_front,
-            selected_back_blocks=pred_selected_back
-        )
+                # 生成当期预测号码
+                period_cands = genmod.gen_numbers(
+                    count=pred_count,
+                    rules=rules_future,
+                    front_blocks=generation_context["front_blocks"],
+                    back_blocks=generation_context["back_blocks"],
+                    front_weights=generation_context["front_weights"],
+                    back_weights=generation_context["back_weights"],
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back
+                )
+                all_period_cands[f'期{period_idx + 1}'] = period_cands
+            
+            # 设置所有期的候选号码
+            cands = []
+            for period_name, period_candidates in all_period_cands.items():
+                # 为每个候选号码添加期数信息
+                for cand in period_candidates:
+                    cand_with_period = cand.copy()
+                    cand_with_period['period'] = period_name
+                    cands.append(cand_with_period)
+        else:
+            # 单期预测
+            rules_future = assemble_rules(
+                base_rules=predict_rules,
+                min_consec=min_consec,
+                min_odd=min_odd,
+                exclude_front=exclude_front,
+                exclude_back=exclude_back,
+                top_n_blocks=top_n_blocks_future,
+                max_per_block=max_per_block_future,
+                random_blocks_count=random_blocks_count_future,
+                random_back_blocks_count=random_back_blocks_count_future
+            )
+
+            cands = genmod.gen_numbers(
+                count=pred_count,
+                rules=rules_future,
+                front_blocks=generation_context["front_blocks"],
+                back_blocks=generation_context["back_blocks"],
+                front_weights=generation_context["front_weights"],
+                back_weights=generation_context["back_weights"],
+                selected_front_blocks=pred_selected_front,
+                selected_back_blocks=pred_selected_back
+            )
 
         if not cands:
             st.warning("未生成到符合条件的号码，请调整参数重试。")
@@ -771,8 +817,11 @@ with tab_predict:
             # 每注一列显示
             rows = []
             for i, c in enumerate(cands, 1):
+                # 检查是否有多期信息
+                period_info = c.get('period', '')
                 rows.append({
                     "预测序号": i,
+                    "预测期数": period_info,
                     "预测前区": ",".join(map(str, c["front"])),
                     "预测后区": ",".join(map(str, c["back"])),
                     "中奖情况": "未比对"
@@ -816,7 +865,7 @@ with tab_predict:
 
     # 使用Tabs布局显示未来预测和历史回测
     if (generate_button and len(cands) > 0) or backtest_n > 0:
-        result_tabs = st.tabs(["🔮 未来预测号码", "📊 历史回测结果"])
+        result_tabs = st.tabs(["🔮 未来预测号码", "📊 历史回测结果", "📈 未来多期回测"])
         
         # 未来预测号码Tab
         with result_tabs[0]:
@@ -834,6 +883,10 @@ with tab_predict:
                             "预测序号": st.column_config.NumberColumn(
                                 "预测序号",
                                 format="%d",
+                            ),
+                            "预测期数": st.column_config.Column(
+                                "预测期数",
+                                width="small",
                             ),
                             "预测前区": st.column_config.Column(
                                 "预测前区",
@@ -856,6 +909,101 @@ with tab_predict:
         with result_tabs[1]:
             if backtest_n > 0:
                 st.subheader(f"历史回测（最近 {backtest_n} 期，每期 {pred_count} 注）")
+        
+        # 未来多期回测Tab
+        with result_tabs[2]:
+            if multi_period_enabled and generate_button and len(cands) > 0:
+                st.subheader(f"未来多期预测回测（预测 {future_periods} 期，每期 {pred_count} 注）")
+                
+                # 确保回测间隔期数有默认值
+                if backtest_gap_periods < 0:
+                    backtest_gap_periods = 0
+                
+                # 获取历史数据用于模拟未来回测
+                if len(df_filtered) >= backtest_gap_periods + future_periods:
+                    # 选择适当的历史数据作为模拟的未来开奖结果
+                    # 使用历史数据中的较早期数据，跳过最近的gap期
+                    future_test_data = df_filtered.sort_values("date", ascending=False).iloc[backtest_gap_periods:backtest_gap_periods+future_periods].reset_index(drop=True)
+                    
+                    # 多期回测数据准备
+                    multi_period_backtest_data = []
+                    total_cost_multi = 0.0
+                    total_return_multi = 0.0
+                    total_bets_multi = 0
+                    
+                    # 按期数分组预测号码
+                    cands_by_period = {}
+                    for c in cands:
+                        period = c.get('period', 1)  # 默认第一期
+                        if period not in cands_by_period:
+                            cands_by_period[period] = []
+                        cands_by_period[period].append(c)
+                    
+                    # 对每一期进行回测
+                    for idx, row in future_test_data.iterrows():
+                        period_num = idx + 1
+                        period_cands = cands_by_period.get(period_num, [])
+                        
+                        if period_cands:
+                            row_data = {
+                                "预测期数": period_num,
+                                "开奖期号": row["issue"],
+                                "开奖前区": ",".join(map(str, row[["f1", "f2", "f3", "f4", "f5"]])),
+                                "开奖后区": ",".join(map(str, row[["b1", "b2"]]))
+                            }
+                            row_bets = len(period_cands)
+                            row_cost = row_bets * ticket_cost
+                            row_return = 0.0
+                            
+                            for i, c in enumerate(period_cands, 1):
+                                row_data[f"预测前区{i}"] = ",".join(map(str, c["front"]))
+                                row_data[f"预测后区{i}"] = ",".join(map(str, c["back"]))
+                                prize_name = check_prize(
+                                    c["front"],
+                                    c["back"],
+                                    row[["f1", "f2", "f3", "f4", "f5"]].tolist(),
+                                    row[["b1", "b2"]].tolist()
+                                )
+                                row_data[f"中奖情况{i}"] = prize_name
+                                row_return += prize_amounts.get(prize_name, 0.0)
+                            
+                            row_data["投注注数"] = row_bets
+                            row_data["投入(元)"] = row_cost
+                            row_data["回收(元)"] = row_return
+                            row_data["收益(元)"] = row_return - row_cost
+                            total_cost_multi += row_cost
+                            total_return_multi += row_return
+                            total_bets_multi += row_bets
+                            multi_period_backtest_data.append(row_data)
+                    
+                    if multi_period_backtest_data:
+                        multi_period_df = pd.DataFrame(multi_period_backtest_data)
+                        
+                        # 显示回测表格
+                        prize_cols = [col for col in multi_period_df.columns if "中奖情况" in col]
+                        st.dataframe(
+                            multi_period_df.style.applymap(lambda v: PRIZE_COLOR.get(v, ""), subset=prize_cols),
+                            use_container_width=False
+                        )
+                        
+                        # 显示回测汇总统计
+                        st.markdown("### 📊 回测汇总")
+                        summary_cols = st.columns(4)
+                        with summary_cols[0]:
+                            st.metric("总投注注数", total_bets_multi)
+                        with summary_cols[1]:
+                            st.metric("总投入", f"¥{total_cost_multi:.2f}")
+                        with summary_cols[2]:
+                            st.metric("总回收", f"¥{total_return_multi:.2f}")
+                        with summary_cols[3]:
+                            profit_rate = ((total_return_multi - total_cost_multi) / total_cost_multi * 100) if total_cost_multi > 0 else 0
+                            st.metric("收益率", f"{profit_rate:.2f}%")
+                    else:
+                        st.warning("没有足够的预测数据进行多期回测")
+                else:
+                    st.warning(f"历史数据不足，需要至少 {backtest_gap_periods + future_periods} 期数据进行多期回测")
+            else:
+                st.info("请先启用多期预测并生成未来号码以查看多期回测结果")
         history_df = df_filtered.sort_values("date", ascending=False).head(backtest_n).reset_index(drop=True)
         
         PRIZE_RULES = [
