@@ -298,22 +298,384 @@ with tab_data:
 # --------------------- Tab2: 数据图表 ---------------------
 with tab_chart:
     st.subheader("前区落点热力图")
+    # 优化前区热力图：计算实际出现次数
     front_matrix = pd.DataFrame(0, index=df_filtered.index, columns=front_labels)
     for col in ["f1","f2","f3","f4","f5"]:
         for i,(lo,hi) in enumerate(front_bins):
             mask = df_filtered[col].between(lo, hi)
-            front_matrix.loc[df_filtered.index[mask], front_labels[i]] = 1
-    fig_front = px.imshow(front_matrix.T, labels=dict(x="期号", y="区块", color="次数"))
+            front_matrix.loc[df_filtered.index[mask], front_labels[i]] += 1
+    
+    # 优化热力图样式和颜色映射
+    fig_front = px.imshow(
+        front_matrix.T, 
+        labels=dict(x="期号", y="区块", color="出现次数"),
+        color_continuous_scale="YlOrRd",  # 使用更直观的颜色映射
+        title="前区号码区块出现频次热力图",
+        text_auto=True,  # 显示具体数值
+        aspect="auto"  # 自动调整宽高比
+    )
+    
+    # 美化图表
+    fig_front.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        coloraxis_colorbar=dict(
+            title="出现次数",
+            thicknessmode="pixels", thickness=20,
+            lenmode="pixels", len=300,
+            yanchor="top", y=1,
+            ticks="outside"
+        )
+    )
+    
+    # 优化坐标轴标签显示
+    fig_front.update_xaxes(tickangle=45, tickfont_size=10)
+    fig_front.update_yaxes(tickfont_size=12)
+    
     st.plotly_chart(fig_front, use_container_width=True)
 
     st.subheader("后区落点热力图")
+    # 优化后区热力图：计算实际出现次数
     back_matrix = pd.DataFrame(0, index=df_filtered.index, columns=back_labels)
     for col in ["b1","b2"]:
         for i,(lo,hi) in enumerate(back_bins):
             mask = df_filtered[col].between(lo, hi)
-            back_matrix.loc[df_filtered.index[mask], back_labels[i]] = 1
-    fig_back = px.imshow(back_matrix.T, labels=dict(x="期号", y="区块", color="次数"))
+            back_matrix.loc[df_filtered.index[mask], back_labels[i]] += 1
+    
+    # 优化热力图样式和颜色映射
+    fig_back = px.imshow(
+        back_matrix.T, 
+        labels=dict(x="期号", y="区块", color="出现次数"),
+        color_continuous_scale="YlGnBu",  # 使用不同的颜色映射以区分前后区
+        title="后区号码区块出现频次热力图",
+        text_auto=True,  # 显示具体数值
+        aspect="auto"  # 自动调整宽高比
+    )
+    
+    # 美化图表
+    fig_back.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        coloraxis_colorbar=dict(
+            title="出现次数",
+            thicknessmode="pixels", thickness=20,
+            lenmode="pixels", len=300,
+            yanchor="top", y=1,
+            ticks="outside"
+        )
+    )
+    
+    # 优化坐标轴标签显示
+    fig_back.update_xaxes(tickangle=45, tickfont_size=10)
+    fig_back.update_yaxes(tickfont_size=12)
+    
     st.plotly_chart(fig_back, use_container_width=True)
+
+    # --------------------- 添加前区号码频率分布直方图 ---------------------
+    st.subheader("前区号码频率分布直方图")
+    # 计算前区每个号码的出现频率
+    front_numbers = pd.concat([df_filtered['f1'], df_filtered['f2'], df_filtered['f3'], df_filtered['f4'], df_filtered['f5']])
+    front_freq = front_numbers.value_counts().sort_index()
+    
+    # 创建前区号码频率直方图
+    fig_front_freq = px.bar(
+        x=front_freq.index, 
+        y=front_freq.values,
+        labels=dict(x="前区号码", y="出现次数"),
+        title="前区号码出现频率分布",
+        color=front_freq.values,
+        color_continuous_scale="Viridis",
+        text_auto=True
+    )
+    
+    # 美化图表
+    fig_front_freq.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(
+            title="出现次数",
+            thicknessmode="pixels", thickness=20
+        )
+    )
+    
+    st.plotly_chart(fig_front_freq, use_container_width=True)
+    
+    # --------------------- 添加后区号码频率分布直方图 ---------------------
+    st.subheader("后区号码频率分布直方图")
+    # 计算后区每个号码的出现频率
+    back_numbers = pd.concat([df_filtered['b1'], df_filtered['b2']])
+    back_freq = back_numbers.value_counts().sort_index()
+    
+    # 创建后区号码频率直方图
+    fig_back_freq = px.bar(
+        x=back_freq.index, 
+        y=back_freq.values,
+        labels=dict(x="后区号码", y="出现次数"),
+        title="后区号码出现频率分布",
+        color=back_freq.values,
+        color_continuous_scale="Cividis",
+        text_auto=True
+    )
+    
+    # 美化图表
+    fig_back_freq.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(
+            title="出现次数",
+            thicknessmode="pixels", thickness=20
+        )
+    )
+    
+    st.plotly_chart(fig_back_freq, use_container_width=True)
+
+    # --------------------- 添加前区号码遗漏值图表 ---------------------
+    st.subheader("前区号码遗漏值图表")
+    # 计算前区每个号码的遗漏值
+    current_period = df_filtered.index.max()
+    
+    # 计算每个前区号码最后一次出现的期号
+    front_last_occurrence = {}
+    for num in range(1, 36):
+        # 找出所有包含该号码的行
+        mask = ((df_filtered['f1'] == num) | 
+                (df_filtered['f2'] == num) | 
+                (df_filtered['f3'] == num) | 
+                (df_filtered['f4'] == num) | 
+                (df_filtered['f5'] == num))
+        
+        if mask.any():
+            # 获取最后一次出现的期号
+            last_occurrence = df_filtered[mask].index.max()
+            # 计算遗漏值 = 当前期号 - 最后一次出现的期号
+            omission = current_period - last_occurrence
+        else:
+            # 从未出现过，遗漏值为当前期号
+            omission = current_period
+            
+        front_last_occurrence[num] = omission
+    
+    # 转换为DataFrame
+    front_omission_df = pd.DataFrame.from_dict(front_last_occurrence, orient='index', columns=['遗漏值'])
+    front_omission_df = front_omission_df.sort_index()
+    
+    # 创建前区号码遗漏值图表
+    fig_front_omission = px.bar(
+        x=front_omission_df.index,
+        y=front_omission_df['遗漏值'],
+        labels=dict(x="前区号码", y="遗漏期数"),
+        title="前区号码遗漏值分布",
+        color=front_omission_df['遗漏值'],
+        color_continuous_scale="RdYlBu_r",  # 反向颜色，遗漏值越大颜色越深
+        text_auto=True
+    )
+    
+    # 美化图表
+    fig_front_omission.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(
+            title="遗漏期数",
+            thicknessmode="pixels", thickness=20
+        )
+    )
+    
+    st.plotly_chart(fig_front_omission, use_container_width=True)
+    
+    # --------------------- 添加后区号码遗漏值图表 ---------------------
+    st.subheader("后区号码遗漏值图表")
+    # 计算后区每个号码的遗漏值
+    back_last_occurrence = {}
+    for num in range(1, 13):
+        # 找出所有包含该号码的行
+        mask = ((df_filtered['b1'] == num) | 
+                (df_filtered['b2'] == num))
+        
+        if mask.any():
+            # 获取最后一次出现的期号
+            last_occurrence = df_filtered[mask].index.max()
+            # 计算遗漏值 = 当前期号 - 最后一次出现的期号
+            omission = current_period - last_occurrence
+        else:
+            # 从未出现过，遗漏值为当前期号
+            omission = current_period
+            
+        back_last_occurrence[num] = omission
+    
+    # 转换为DataFrame
+    back_omission_df = pd.DataFrame.from_dict(back_last_occurrence, orient='index', columns=['遗漏值'])
+    back_omission_df = back_omission_df.sort_index()
+    
+    # 创建后区号码遗漏值图表
+    fig_back_omission = px.bar(
+        x=back_omission_df.index,
+        y=back_omission_df['遗漏值'],
+        labels=dict(x="后区号码", y="遗漏期数"),
+        title="后区号码遗漏值分布",
+        color=back_omission_df['遗漏值'],
+        color_continuous_scale="RdYlBu_r",  # 反向颜色，遗漏值越大颜色越深
+        text_auto=True
+    )
+    
+    # 美化图表
+    fig_back_omission.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(
+            title="遗漏期数",
+            thicknessmode="pixels", thickness=20
+        )
+    )
+    
+    st.plotly_chart(fig_back_omission, use_container_width=True)
+
+    # --------------------- 添加前区号码连号分析图表 ---------------------
+    st.subheader("前区号码连号分析图表")
+    
+    # 计算每期的连号组数和最长连号长度
+    def calculate_consecutive_groups(row):
+        front_nums = sorted([row['f1'], row['f2'], row['f3'], row['f4'], row['f5']])
+        consecutive_groups = []
+        current_group = [front_nums[0]]
+        
+        for num in front_nums[1:]:
+            if num == current_group[-1] + 1:
+                current_group.append(num)
+            else:
+                if len(current_group) > 1:
+                    consecutive_groups.append(len(current_group))
+                current_group = [num]
+        
+        # 检查最后一组
+        if len(current_group) > 1:
+            consecutive_groups.append(len(current_group))
+        
+        return len(consecutive_groups), max(consecutive_groups) if consecutive_groups else 0
+    
+    # 应用函数计算连号信息
+    df_filtered['连号组数'], df_filtered['最长连号长度'] = zip(*df_filtered.apply(calculate_consecutive_groups, axis=1))
+    
+    # 创建连号组数统计图表
+    st.subheader("前区连号组数分布")
+    consecutive_counts = df_filtered['连号组数'].value_counts().sort_index()
+    
+    fig_consecutive_groups = px.bar(
+        x=consecutive_counts.index,
+        y=consecutive_counts.values,
+        labels=dict(x="连号组数", y="出现期数"),
+        title="前区号码连号组数分布",
+        color=consecutive_counts.values,
+        color_continuous_scale="Plasma",
+        text_auto=True
+    )
+    
+    fig_consecutive_groups.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(title="出现期数")
+    )
+    
+    st.plotly_chart(fig_consecutive_groups, use_container_width=True)
+    
+    # 创建最长连号长度统计图表
+    st.subheader("前区最长连号长度分布")
+    max_consecutive_counts = df_filtered['最长连号长度'].value_counts().sort_index()
+    
+    fig_max_consecutive = px.bar(
+        x=max_consecutive_counts.index,
+        y=max_consecutive_counts.values,
+        labels=dict(x="最长连号长度", y="出现期数"),
+        title="前区号码最长连号长度分布",
+        color=max_consecutive_counts.values,
+        color_continuous_scale="Jet",
+        text_auto=True
+    )
+    
+    fig_max_consecutive.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=0,
+        xaxis=dict(tickmode='linear'),
+        coloraxis_colorbar=dict(title="出现期数")
+    )
+    
+    st.plotly_chart(fig_max_consecutive, use_container_width=True)
+
+    # --------------------- 添加前区和后区号码相关性分析图表 ---------------------
+    st.subheader("前区和后区号码相关性分析图表")
+    
+    # 计算前区和后区的统计特征
+    df_stats = pd.DataFrame(index=df_filtered.index)
+    
+    # 前区统计特征
+    df_stats['前区和值'] = df_filtered['f1'] + df_filtered['f2'] + df_filtered['f3'] + df_filtered['f4'] + df_filtered['f5']
+    df_stats['前区平均值'] = df_stats['前区和值'] / 5
+    df_stats['前区最大值'] = df_filtered[['f1', 'f2', 'f3', 'f4', 'f5']].max(axis=1)
+    df_stats['前区最小值'] = df_filtered[['f1', 'f2', 'f3', 'f4', 'f5']].min(axis=1)
+    df_stats['前区极差'] = df_stats['前区最大值'] - df_stats['前区最小值']
+    df_stats['前区中位数'] = df_filtered[['f1', 'f2', 'f3', 'f4', 'f5']].median(axis=1)
+    
+    # 后区统计特征
+    df_stats['后区和值'] = df_filtered['b1'] + df_filtered['b2']
+    df_stats['后区平均值'] = df_stats['后区和值'] / 2
+    df_stats['后区最大值'] = df_filtered[['b1', 'b2']].max(axis=1)
+    df_stats['后区最小值'] = df_filtered[['b1', 'b2']].min(axis=1)
+    df_stats['后区极差'] = df_stats['后区最大值'] - df_stats['后区最小值']
+    df_stats['后区中位数'] = df_filtered[['b1', 'b2']].median(axis=1)
+    
+    # 计算相关性矩阵
+    corr_matrix = df_stats.corr()
+    
+    # 创建相关性热力图
+    fig_corr = px.imshow(
+        corr_matrix, 
+        labels=dict(x="统计特征", y="统计特征", color="相关性系数"),
+        title="前区和后区统计特征相关性矩阵",
+        color_continuous_scale="RdBu_r",  # 红色-蓝色反向映射，红色代表正相关，蓝色代表负相关
+        text_auto=True,  # 显示具体数值
+        zmin=-1, zmax=1  # 设置颜色范围为-1到1
+    )
+    
+    # 美化图表
+    fig_corr.update_layout(
+        title_font_size=16,
+        xaxis_title_font_size=14,
+        yaxis_title_font_size=14,
+        xaxis_tickangle=45,
+        xaxis_tickfont_size=10,
+        yaxis_tickfont_size=10,
+        coloraxis_colorbar=dict(
+            title="相关性系数",
+            thicknessmode="pixels", thickness=20,
+            lenmode="pixels", len=300
+        )
+    )
+    
+    st.plotly_chart(fig_corr, use_container_width=True)
+    
+    # 解释相关性结果
+    st.markdown("**相关性分析说明**：")
+    st.markdown("- 相关性系数范围为-1到1，越接近1表示正相关越强，越接近-1表示负相关越强，越接近0表示相关性越弱")
+    st.markdown("- 红色区域表示正相关，蓝色区域表示负相关，白色区域表示无相关性")
+    st.markdown("- 可以观察前区统计特征（如和值、平均值）与后区统计特征之间的关联模式")
 
 # --------------------- Tab3: 号码生成 ---------------------
 with tab_generate:
