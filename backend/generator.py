@@ -3,6 +3,32 @@ from typing import List, Dict, Optional, Set, Tuple
 import random
 import numpy as np
 
+def consecutive_pairs_count(nums: List[int]) -> int:
+    """计算连号对数（相邻连续数字的对数）"""
+    cnt = 0
+    for i in range(1, len(nums)):
+        if nums[i] == nums[i-1] + 1:
+            cnt += 1
+    return cnt
+
+def consecutive_groups_count(nums: List[int]) -> int:
+    """计算连号组数（连续号码段的数量）"""
+    if len(nums) < 2:
+        return 0
+    
+    groups = 0
+    in_group = False
+    
+    for i in range(1, len(nums)):
+        if nums[i] == nums[i-1] + 1:
+            if not in_group:
+                groups += 1
+                in_group = True
+        else:
+            in_group = False
+    
+    return groups
+
 def gen_numbers(
     count: int = 5,
     rules: Optional[Dict] = None,
@@ -18,13 +44,6 @@ def gen_numbers(
     rng = random.Random()
     rules = rules or {}
     results: List[Dict] = []
-
-    def consecutive_pairs_count(nums: List[int]) -> int:
-        cnt = 0
-        for i in range(1, len(nums)):
-            if nums[i] == nums[i-1] + 1:
-                cnt += 1
-        return cnt
         
     def calculate_diversity_score(numbers: List[int]) -> float:
         """计算号码组合的多样性分数"""
@@ -265,13 +284,19 @@ def gen_numbers(
         if odd_count < min_odd_count or (max_odd_count is not None and odd_count > max_odd_count):
             ok = False
             
-        # 连号对数检查
-        cons_pairs = consecutive_pairs_count(f_selected)
-        if cons_mode == "exact" and cons_pairs != cons_req:
+        # 连号检查（支持检查连号对数或连号组数）
+        cons_check_type = rules.get("consecutive_check_type", "groups")  # "pairs" 或 "groups"
+        
+        if cons_check_type == "groups":
+            cons_count = consecutive_groups_count(f_selected)
+        else:  # pairs
+            cons_count = consecutive_pairs_count(f_selected)
+            
+        if cons_mode == "exact" and cons_count != cons_req:
             ok = False
-        elif cons_mode == "min" and cons_pairs < cons_req:
+        elif cons_mode == "min" and cons_count < cons_req:
             ok = False
-        elif cons_mode == "max" and cons_pairs > cons_req:
+        elif cons_mode == "max" and cons_count > cons_req:
             ok = False
         
         # 多样性检查

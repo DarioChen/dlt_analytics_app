@@ -206,10 +206,13 @@ def compute_exclusions(front_freq_map, back_freq_map, exclude_top_n, exclude_fro
     return [n for n, _ in top_front], [n for n, _ in top_back]
 
 def assemble_rules(base_rules, min_consec, min_odd, exclude_front, exclude_back,
-                   top_n_blocks, max_per_block, random_blocks_count, random_back_blocks_count):
+                   top_n_blocks, max_per_block, random_blocks_count, random_back_blocks_count,
+                   consecutive_mode="exact", consecutive_check_type="groups"):
     rules = base_rules.copy()
     rules.update({
         "consecutive_count": min_consec,
+        "consecutive_mode": consecutive_mode,
+        "consecutive_check_type": consecutive_check_type,
         "odd_even_front": [min_odd, 5 - min_odd],
         "front_exclude": exclude_front,
         "back_exclude": exclude_back,
@@ -336,42 +339,45 @@ with tab_chart:
     st.plotly_chart(fig_front, use_container_width=True)
 
     st.subheader("后区落点热力图")
-    # 优化后区热力图：计算实际出现次数
-    back_matrix = pd.DataFrame(0, index=df_filtered.index, columns=back_labels)
-    for col in ["b1","b2"]:
-        for i,(lo,hi) in enumerate(back_bins):
-            mask = df_filtered[col].between(lo, hi)
-            back_matrix.loc[df_filtered.index[mask], back_labels[i]] += 1
-    
-    # 优化热力图样式和颜色映射
-    fig_back = px.imshow(
-        back_matrix.T, 
-        labels=dict(x="期号", y="区块", color="出现次数"),
-        color_continuous_scale="YlGnBu",  # 使用不同的颜色映射以区分前后区
-        title="后区号码区块出现频次热力图",
-        text_auto=True,  # 显示具体数值
-        aspect="auto"  # 自动调整宽高比
-    )
-    
-    # 美化图表
-    fig_back.update_layout(
-        title_font_size=16,
-        xaxis_title_font_size=14,
-        yaxis_title_font_size=14,
-        coloraxis_colorbar=dict(
-            title="出现次数",
-            thicknessmode="pixels", thickness=20,
-            lenmode="pixels", len=300,
-            yanchor="top", y=1,
-            ticks="outside"
+    if not df_filtered.empty:
+        # 优化后区热力图：计算实际出现次数
+        back_matrix = pd.DataFrame(0, index=df_filtered.index, columns=back_labels)
+        for col in ["b1","b2"]:
+            for i,(lo,hi) in enumerate(back_bins):
+                mask = df_filtered[col].between(lo, hi)
+                back_matrix.loc[df_filtered.index[mask], back_labels[i]] += 1
+        
+        # 优化热力图样式和颜色映射
+        fig_back = px.imshow(
+            back_matrix.T, 
+            labels=dict(x="期号", y="区块", color="出现次数"),
+            color_continuous_scale="YlGnBu",  # 使用不同的颜色映射以区分前后区
+            title="后区号码区块出现频次热力图",
+            text_auto=True,  # 显示具体数值
+            aspect="auto"  # 自动调整宽高比
         )
-    )
-    
-    # 优化坐标轴标签显示
-    fig_back.update_xaxes(tickangle=45, tickfont_size=10)
-    fig_back.update_yaxes(tickfont_size=12)
-    
-    st.plotly_chart(fig_back, use_container_width=True)
+        
+        # 美化图表
+        fig_back.update_layout(
+            title_font_size=16,
+            xaxis_title_font_size=14,
+            yaxis_title_font_size=14,
+            coloraxis_colorbar=dict(
+                title="出现次数",
+                thicknessmode="pixels", thickness=20,
+                lenmode="pixels", len=300,
+                yanchor="top", y=1,
+                ticks="outside"
+            )
+        )
+        
+        # 优化坐标轴标签显示
+        fig_back.update_xaxes(tickangle=45, tickfont_size=10)
+        fig_back.update_yaxes(tickfont_size=12)
+        
+        st.plotly_chart(fig_back, use_container_width=True)
+    else:
+        st.warning("当前筛选条件下没有后区数据可供显示")
 
     # --------------------- 添加前区号码频率分布直方图 ---------------------
     st.subheader("前区号码频率分布直方图")
@@ -404,7 +410,31 @@ with tab_chart:
     )
     
     st.plotly_chart(fig_front_freq, use_container_width=True)
-    
+
+    # --------------------- 遗漏号码分布解释 ---------------------
+    with st.expander("❓ 什么是遗漏号码分布？"):
+        st.markdown("""
+        **遗漏号码分布**是指每个号码从上次出现到当前期号之间的间隔期数。
+        
+        - **遗漏值**：一个号码连续未出现的期数
+        - **热号**：遗漏值小，近期频繁出现的号码
+        - **冷号**：遗漏值大，长期未出现的号码
+        - **温号**：遗漏值适中的号码
+        
+        通过分析遗漏号码分布，玩家可以了解号码的冷热程度，辅助选号决策。
+        """)
+
+    with st.expander("❓ 为什么21、32号码出现次数多？"):
+        st.markdown("""
+        从历史数据统计来看，21和32号出现次数较多，主要原因是：
+        
+        1. **随机分布的正常波动**：在大样本数据中，号码出现次数会有自然波动
+        2. **统计概率的体现**：理论上每个号码出现概率相等，但实际中会有短期的集中现象
+        3. **历史趋势影响**：部分号码在特定时期会形成"热号效应"
+        
+        需要注意的是，彩票号码是完全随机的，过去的热号并不能保证未来继续热门。
+        """)
+
     # --------------------- 添加后区号码频率分布直方图 ---------------------
     st.subheader("后区号码频率分布直方图")
     # 计算后区每个号码的出现频率
@@ -716,9 +746,23 @@ with tab_generate:
     with colB:
         front_include = st.text_input("前区必含(逗号分隔)", "")
         front_exclude = st.text_input("前区排除(逗号分隔)", "")
-        consecutive_count = st.number_input("前区连号数量(对数)", 0, 5, 0)
-        cons_mode_label = st.selectbox("连号匹配方式", ["等于", "至少"])
-        consecutive_mode = "exact" if cons_mode_label == "等于" else "min"
+        consecutive_count = st.number_input("前区连号限制数量", 0, 5, 0)
+        cons_mode_label = st.selectbox("连号匹配方式", ["等于", "至少", "最多"])
+        if cons_mode_label == "等于":
+            consecutive_mode = "exact"
+        elif cons_mode_label == "至少":
+            consecutive_mode = "min"
+        else:  # 最多
+            consecutive_mode = "max"
+        
+        cons_check_type_label = st.selectbox("连号检查类型", ["连号组数", "连号对数"])
+        consecutive_check_type = "groups" if cons_check_type_label == "连号组数" else "pairs"
+        
+        # 添加说明
+        if cons_check_type_label == "连号组数":
+            st.caption("连号组数：连续号码段的数量。如[1,2,3,5,6]有2组连号")
+        else:
+            st.caption("连号对数：相邻连续数字的对数。如[1,2,3,5,6]有3对连号")
     with colC:
         back_include = st.text_input("后区必含(逗号分隔)", "")
         back_exclude = st.text_input("后区排除(逗号分隔)", "")
@@ -746,6 +790,7 @@ with tab_generate:
         "back_exclude": parse_nums(back_exclude),
         "consecutive_count": consecutive_count,
         "consecutive_mode": consecutive_mode,
+        "consecutive_check_type": consecutive_check_type,
         "top_n_blocks": top_n_blocks,
         "max_per_block": max_per_block,
         "random_blocks_count": random_blocks_count,
@@ -817,8 +862,20 @@ with tab_predict:
             # 基本参数 - 使用更小的列布局适配侧边栏
             use_recent_n = st.number_input("权重最近N期", 0, 1000, 2, key="tab4_recent_n")
             pred_count = st.number_input("每期注数", 1, 20, 5, key="tab4_pred_count")
-            min_consec = st.number_input("前区最小连号", 0, 5, 0, key="tab4_min_consec")
+            min_consec = st.number_input("前区连号限制数量", 0, 5, 0, key="tab4_min_consec")
             min_odd = st.number_input("前区最小奇数", 0, 5, 2, key="tab4_min_odd")
+            
+            # 连号相关参数
+            consec_mode_label = st.selectbox("连号匹配方式", ["等于", "至少", "最多"], index=2, key="tab4_consec_mode")
+            if consec_mode_label == "等于":
+                consec_mode = "exact"
+            elif consec_mode_label == "至少":
+                consec_mode = "min"
+            else:  # 最多
+                consec_mode = "max"
+            
+            consec_check_type_label = st.selectbox("连号检查类型", ["连号组数", "连号对数"], key="tab4_consec_check_type")
+            consec_check_type = "groups" if consec_check_type_label == "连号组数" else "pairs"
 
             # 多期预测参数
             multi_period_enabled = st.checkbox("启用多期预测", value=True, key="tab4_multi_period_enabled")
@@ -910,6 +967,8 @@ with tab_predict:
                             'pred_count': pred_count,
                             'min_consec': min_consec,
                             'min_odd': min_odd,
+                            'consec_mode': consec_mode,
+                            'consec_check_type': consec_check_type,
                             'pred_selected_front': pred_selected_front,
                             'pred_selected_back': pred_selected_back,
                             'top_n_blocks_future': top_n_blocks_future,
@@ -1079,6 +1138,8 @@ with tab_predict:
                 pred_count = strategy_params.get('pred_count', pred_count)
                 min_consec = strategy_params.get('min_consec', min_consec)
                 min_odd = strategy_params.get('min_odd', min_odd)
+                consec_mode = strategy_params.get('consec_mode', consec_mode)
+                consec_check_type = strategy_params.get('consec_check_type', consec_check_type)
                 pred_selected_front = strategy_params.get('pred_selected_front', pred_selected_front)
                 pred_selected_back = strategy_params.get('pred_selected_back', pred_selected_back)
                 top_n_blocks_future = strategy_params.get('top_n_blocks_future', top_n_blocks_future)
@@ -1124,7 +1185,9 @@ with tab_predict:
                     top_n_blocks=top_n_blocks_future,
                     max_per_block=max_per_block_future,
                     random_blocks_count=random_blocks_count_future,
-                    random_back_blocks_count=random_back_blocks_count_future
+                    random_back_blocks_count=random_back_blocks_count_future,
+                    consecutive_mode=consec_mode,
+                    consecutive_check_type=consec_check_type
                 )
 
                 # 生成当期预测号码
@@ -1159,7 +1222,9 @@ with tab_predict:
                 top_n_blocks=top_n_blocks_future,
                 max_per_block=max_per_block_future,
                 random_blocks_count=random_blocks_count_future,
-                random_back_blocks_count=random_back_blocks_count_future
+                random_back_blocks_count=random_back_blocks_count_future,
+                consecutive_mode=consec_mode,
+                consecutive_check_type=consec_check_type
             )
 
             cands = genmod.gen_numbers(
@@ -1441,7 +1506,9 @@ with tab_predict:
                 top_n_blocks=top_n_blocks_future,
                 max_per_block=max_per_block_future,
                 random_blocks_count=random_blocks_count_future,
-                random_back_blocks_count=random_back_blocks_count_future
+                random_back_blocks_count=random_back_blocks_count_future,
+                consecutive_mode=consec_mode,
+                consecutive_check_type=consec_check_type
             )
 
             gen = genmod.gen_numbers(
@@ -1716,7 +1783,9 @@ with tab_ai:
                                 top_n_blocks=params.top_n_blocks,
                                 max_per_block=params.max_per_block,
                                 random_blocks_count=params.random_blocks_count,
-                                random_back_blocks_count=params.random_back_blocks_count
+                                random_back_blocks_count=params.random_back_blocks_count,
+                                consecutive_mode=params.consecutive_mode,
+                                consecutive_check_type=params.consecutive_check_type
                             )
                             
                             gen = genmod.gen_numbers(
@@ -2002,7 +2071,9 @@ with tab_ai:
                                 top_n_blocks=batch_top_n_blocks,
                                 max_per_block=batch_max_per_block,
                                 random_blocks_count=batch_random_blocks_count,
-                                random_back_blocks_count=batch_random_back_blocks_count
+                                random_back_blocks_count=batch_random_back_blocks_count,
+                                consecutive_mode="max",  # 批量回测使用默认值
+                                consecutive_check_type="groups"
                             )
                             
                             gen_bt = genmod.gen_numbers(
