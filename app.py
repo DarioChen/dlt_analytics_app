@@ -13,6 +13,8 @@ from backend.db import init_db, session_scope, Draw
 from backend.sync import import_csv, sync_remote_history
 from backend.analysis import dataframe_from_draws
 from backend import generator as genmod
+from backend.enhanced_generator import EnhancedNumberGenerator
+from backend.markov_model import BigDataAnalyzer
 from backend.optimizer import genetic_algorithm_optimize, bayesian_optimize, get_optimization_methods
 from backend.backtest import BacktestAnalyzer
 from backend.performance_test import PerformanceTester
@@ -26,6 +28,10 @@ st.title("🎯 大乐透分析与选号（本地版） v2.0 — 增强优化与�
 # 初始化回测分析器和性能测试器
 backtest_analyzer = BacktestAnalyzer()
 performance_tester = PerformanceTester()
+
+# 初始化增强号码生成器
+enhanced_generator = EnhancedNumberGenerator()
+big_data_analyzer = BigDataAnalyzer()
 
 # --------------------- 策略管理相关功能 ---------------------  
 def ensure_strategies_dir():
@@ -797,6 +803,41 @@ with tab_generate:
         "random_back_blocks_count": random_back_blocks_count
     }
 
+    st.subheader("🚀 增强生成选项")
+    
+    # 增强生成设置
+    use_enhanced = st.checkbox("启用增强生成（马尔可夫链 + 大数据分析）", value=False, key="use_enhanced_gen")
+    
+    if use_enhanced:
+        enhanced_cols = st.columns(3)
+        with enhanced_cols[0]:
+            use_markov = st.checkbox("使用马尔可夫链模型", value=True, key="use_markov_gen")
+            markov_weight = st.slider("马尔可夫链权重", 0.0, 1.0, 0.4, 0.1, key="markov_weight_gen")
+        
+        with enhanced_cols[1]:
+            use_big_data = st.checkbox("使用大数据分析", value=True, key="use_big_data_gen")
+            big_data_weight = st.slider("大数据分析权重", 0.0, 1.0, 0.3, 0.1, key="big_data_weight_gen")
+        
+        with enhanced_cols[2]:
+            traditional_weight = st.slider("传统方法权重", 0.0, 1.0, 0.3, 0.1, key="traditional_weight_gen")
+        
+        # 权重归一化提示
+        total_weight = markov_weight + big_data_weight + traditional_weight
+        if total_weight != 1.0:
+            st.caption(f"⚠️ 权重总和为 {total_weight:.1f}，将自动归一化")
+        
+        # 初始化增强生成器（如果尚未初始化）
+        if use_enhanced and not enhanced_generator.markov_models and not enhanced_generator.use_ensemble:
+            with st.spinner("正在初始化增强生成器..."):
+                try:
+                    # 添加集成学习选项
+                    use_ensemble_init = st.checkbox("使用集成学习（推荐）", value=True, key="use_ensemble_init_tab3")
+                    enhanced_generator.initialize_models(df_filtered, use_ensemble=use_ensemble_init)
+                    st.success("✅ 增强生成器初始化完成")
+                except Exception as e:
+                    st.error(f"❌ 增强生成器初始化失败: {e}")
+                    use_enhanced = False
+
     st.subheader("🎯 中奖号码比对")
     win_front_input = st.text_input("中奖前区号码（逗号分隔）","")
     win_back_input = st.text_input("中奖后区号码（逗号分隔）","")
@@ -821,22 +862,87 @@ with tab_generate:
                 return f"{name} {bonus}"
         return "未中奖"
 
-    if st.button("生成号码并比对"):
-        win_front = parse_nums(win_front_input)
-        win_back = parse_nums(win_back_input)
-        cands = genmod.gen_numbers(
-            count=max_gen,
-            rules=rules,
-            front_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(front_labels,front_bins)},
-            back_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(back_labels,back_bins)},
-            front_weights=front_weights,
-            back_weights=back_weights,
-            selected_front_blocks=selected_front_blocks,
-            selected_back_blocks=selected_back_blocks
-        )
-        for i,cd in enumerate(cands,1):
-            prize = check_prize(cd['front'],cd['back'],win_front,win_back)
-            st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
+    # 生成按钮区域
+    gen_cols = st.columns(2)
+    
+    with gen_cols[0]:
+        if st.button("🎲 传统生成号码并比对", use_container_width=True):
+            win_front = parse_nums(win_front_input)
+            win_back = parse_nums(win_back_input)
+            cands = genmod.gen_numbers(
+                count=max_gen,
+                rules=rules,
+                front_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(front_labels,front_bins)},
+                back_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(back_labels,back_bins)},
+                front_weights=front_weights,
+                back_weights=back_weights,
+                selected_front_blocks=selected_front_blocks,
+                selected_back_blocks=selected_back_blocks
+            )
+            
+            st.subheader("🎲 传统生成结果")
+            for i,cd in enumerate(cands,1):
+                prize = check_prize(cd['front'],cd['back'],win_front,win_back)
+                st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
+    
+    with gen_cols[1]:
+        if st.button("🚀 增强生成号码并比对", use_container_width=True, disabled=not use_enhanced):
+            if not use_enhanced:
+                st.error("请先启用增强生成选项")
+            else:
+                win_front = parse_nums(win_front_input)
+                win_back = parse_nums(win_back_input)
+                
+                try:
+                    # 使用增强生成器
+                    enhanced_cands = enhanced_generator.generate_enhanced_numbers(
+                        count=max_gen,
+                        rules=rules,
+                        front_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(front_labels,front_bins)},
+                        back_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(back_labels,back_bins)},
+                        front_weights=front_weights,
+                        back_weights=back_weights,
+                        selected_front_blocks=selected_front_blocks,
+                        selected_back_blocks=selected_back_blocks,
+                        historical_data=df_filtered.tail(20),  # 使用最近20期数据
+                        use_markov=use_markov,
+                        use_big_data=use_big_data,
+                        markov_weight=markov_weight,
+                        big_data_weight=big_data_weight,
+                        traditional_weight=traditional_weight
+                    )
+                    
+                    st.subheader("🚀 增强生成结果")
+                    for i, cd in enumerate(enhanced_cands, 1):
+                        prize = check_prize(cd['front'], cd['back'], win_front, win_back)
+                        markov_conf = cd.get('markov_confidence', 0.5)
+                        big_data_score = cd.get('big_data_score', 0.5)
+                        
+                        st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
+                        st.caption(f"马尔可夫置信度: {markov_conf:.3f} | 大数据评分: {big_data_score:.3f}")
+                    
+                    # 显示模型状态
+                    with st.expander("📊 增强生成器状态"):
+                        model_status = enhanced_generator.get_model_status()
+                        st.json(model_status)
+                        
+                except Exception as e:
+                    st.error(f"增强生成失败: {e}")
+                    st.info("回退到传统生成方法...")
+                    # 回退到传统方法
+                    cands = genmod.gen_numbers(
+                        count=max_gen,
+                        rules=rules,
+                        front_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(front_labels,front_bins)},
+                        back_blocks={label:list(range(lo,hi+1)) for label,(lo,hi) in zip(back_labels,back_bins)},
+                        front_weights=front_weights,
+                        back_weights=back_weights,
+                        selected_front_blocks=selected_front_blocks,
+                        selected_back_blocks=selected_back_blocks
+                    )
+                    for i,cd in enumerate(cands,1):
+                        prize = check_prize(cd['front'],cd['back'],win_front,win_back)
+                        st.markdown(f"**第{i}注：前区 {cd['front']} | 后区 {cd['back']} => {prize}**")
 
 
 # --------------------- Tab4: 未来号码预测 + 历史回测（优化版） ---------------------
@@ -945,6 +1051,46 @@ with tab_predict:
         if use_ai_model and ml_predictor is None:
             st.warning("⚠️ 未检测到训练好的AI模型，请在'AI优化与模型训练'标签页先训练模型。")
             use_ai_model = False
+        
+        # 增强生成设置
+        with st.expander("🚀 增强生成设置", expanded=False):
+            use_enhanced_tab4 = st.checkbox("启用增强生成（马尔可夫链 + 大数据分析）", value=False, key="tab4_use_enhanced")
+            
+            if use_enhanced_tab4:
+                enhanced_cols_tab4 = st.columns(3)
+                with enhanced_cols_tab4[0]:
+                    use_markov_tab4 = st.checkbox("使用马尔可夫链模型", value=True, key="tab4_use_markov")
+                    markov_weight_tab4 = st.slider("马尔可夫链权重", 0.0, 1.0, 0.4, 0.1, key="tab4_markov_weight")
+                
+                with enhanced_cols_tab4[1]:
+                    use_big_data_tab4 = st.checkbox("使用大数据分析", value=True, key="tab4_use_big_data")
+                    big_data_weight_tab4 = st.slider("大数据分析权重", 0.0, 1.0, 0.3, 0.1, key="tab4_big_data_weight")
+                
+                with enhanced_cols_tab4[2]:
+                    traditional_weight_tab4 = st.slider("传统方法权重", 0.0, 1.0, 0.3, 0.1, key="tab4_traditional_weight")
+                
+                # 权重归一化提示
+                total_weight_tab4 = markov_weight_tab4 + big_data_weight_tab4 + traditional_weight_tab4
+                if total_weight_tab4 != 1.0:
+                    st.caption(f"⚠️ 权重总和为 {total_weight_tab4:.1f}，将自动归一化")
+                
+                # 初始化增强生成器（如果尚未初始化）
+                if not enhanced_generator.markov_models and not enhanced_generator.use_ensemble:
+                    with st.spinner("正在初始化增强生成器..."):
+                        try:
+                            # 添加集成学习选项
+                            use_ensemble_init_tab4 = st.checkbox("使用集成学习（推荐）", value=True, key="use_ensemble_init_tab4")
+                            enhanced_generator.initialize_models(df_filtered, use_ensemble=use_ensemble_init_tab4)
+                            st.success("✅ 增强生成器初始化完成")
+                        except Exception as e:
+                            st.error(f"❌ 增强生成器初始化失败: {e}")
+                            use_enhanced_tab4 = False
+            else:
+                use_markov_tab4 = False
+                use_big_data_tab4 = False
+                markov_weight_tab4 = 0.0
+                big_data_weight_tab4 = 0.0
+                traditional_weight_tab4 = 1.0
         
         # 策略管理
         with st.expander("💾 策略管理", expanded=False):
@@ -1125,6 +1271,16 @@ with tab_predict:
             type="primary"
         )
     
+    with col3:
+        # 添加空标签以保持与selectbox标签对齐
+        st.markdown("", unsafe_allow_html=True)
+        two_round_button = st.button(
+            "🔄 两轮对比生成", 
+            key="tab4_two_round",
+            use_container_width=True,
+            type="secondary"
+        )
+    
     if generate_button:
         # 检查是否有选中的策略
         if st.session_state.selected_strategy:
@@ -1191,16 +1347,47 @@ with tab_predict:
                 )
 
                 # 生成当期预测号码
-                period_cands = genmod.gen_numbers(
-                    count=pred_count,
-                    rules=rules_future,
-                    front_blocks=generation_context["front_blocks"],
-                    back_blocks=generation_context["back_blocks"],
-                    front_weights=generation_context["front_weights"],
-                    back_weights=generation_context["back_weights"],
-                    selected_front_blocks=pred_selected_front,
-                    selected_back_blocks=pred_selected_back
-                )
+                if use_enhanced_tab4:
+                    try:
+                        period_cands = enhanced_generator.generate_enhanced_numbers(
+                            count=pred_count,
+                            rules=rules_future,
+                            front_blocks=generation_context["front_blocks"],
+                            back_blocks=generation_context["back_blocks"],
+                            front_weights=generation_context["front_weights"],
+                            back_weights=generation_context["back_weights"],
+                            selected_front_blocks=pred_selected_front,
+                            selected_back_blocks=pred_selected_back,
+                            historical_data=recent_window,
+                            use_markov=use_markov_tab4,
+                            use_big_data=use_big_data_tab4,
+                            markov_weight=markov_weight_tab4,
+                            big_data_weight=big_data_weight_tab4,
+                            traditional_weight=traditional_weight_tab4
+                        )
+                    except Exception as e:
+                        st.warning(f"增强生成失败，回退到传统方法: {e}")
+                        period_cands = genmod.gen_numbers(
+                            count=pred_count,
+                            rules=rules_future,
+                            front_blocks=generation_context["front_blocks"],
+                            back_blocks=generation_context["back_blocks"],
+                            front_weights=generation_context["front_weights"],
+                            back_weights=generation_context["back_weights"],
+                            selected_front_blocks=pred_selected_front,
+                            selected_back_blocks=pred_selected_back
+                        )
+                else:
+                    period_cands = genmod.gen_numbers(
+                        count=pred_count,
+                        rules=rules_future,
+                        front_blocks=generation_context["front_blocks"],
+                        back_blocks=generation_context["back_blocks"],
+                        front_weights=generation_context["front_weights"],
+                        back_weights=generation_context["back_weights"],
+                        selected_front_blocks=pred_selected_front,
+                        selected_back_blocks=pred_selected_back
+                    )
                 all_period_cands[f'期{period_idx + 1}'] = period_cands
             
             # 设置所有期的候选号码
@@ -1227,16 +1414,47 @@ with tab_predict:
                 consecutive_check_type=consec_check_type
             )
 
-            cands = genmod.gen_numbers(
-                count=pred_count,
-                rules=rules_future,
-                front_blocks=generation_context["front_blocks"],
-                back_blocks=generation_context["back_blocks"],
-                front_weights=generation_context["front_weights"],
-                back_weights=generation_context["back_weights"],
-                selected_front_blocks=pred_selected_front,
-                selected_back_blocks=pred_selected_back
-            )
+            if use_enhanced_tab4:
+                try:
+                    cands = enhanced_generator.generate_enhanced_numbers(
+                        count=pred_count,
+                        rules=rules_future,
+                        front_blocks=generation_context["front_blocks"],
+                        back_blocks=generation_context["back_blocks"],
+                        front_weights=generation_context["front_weights"],
+                        back_weights=generation_context["back_weights"],
+                        selected_front_blocks=pred_selected_front,
+                        selected_back_blocks=pred_selected_back,
+                        historical_data=recent_window,
+                        use_markov=use_markov_tab4,
+                        use_big_data=use_big_data_tab4,
+                        markov_weight=markov_weight_tab4,
+                        big_data_weight=big_data_weight_tab4,
+                        traditional_weight=traditional_weight_tab4
+                    )
+                except Exception as e:
+                    st.warning(f"增强生成失败，回退到传统方法: {e}")
+                    cands = genmod.gen_numbers(
+                        count=pred_count,
+                        rules=rules_future,
+                        front_blocks=generation_context["front_blocks"],
+                        back_blocks=generation_context["back_blocks"],
+                        front_weights=generation_context["front_weights"],
+                        back_weights=generation_context["back_weights"],
+                        selected_front_blocks=pred_selected_front,
+                        selected_back_blocks=pred_selected_back
+                    )
+            else:
+                cands = genmod.gen_numbers(
+                    count=pred_count,
+                    rules=rules_future,
+                    front_blocks=generation_context["front_blocks"],
+                    back_blocks=generation_context["back_blocks"],
+                    front_weights=generation_context["front_weights"],
+                    back_weights=generation_context["back_weights"],
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back
+                )
 
         if not cands:
             st.warning("未生成到符合条件的号码，请调整参数重试。")
@@ -1290,6 +1508,337 @@ with tab_predict:
                     )
                     st.plotly_chart(fig_back_dist, use_container_width=True)
 
+    # 两轮对比生成逻辑
+    if two_round_button:
+        # 首先检查增强生成器是否已初始化
+        if not enhanced_generator.markov_models and not enhanced_generator.use_ensemble:
+            st.info("🔄 增强生成器未初始化，正在自动初始化...")
+            with st.spinner("正在初始化增强生成器..."):
+                try:
+                    # 自动使用集成学习进行初始化
+                    enhanced_generator.initialize_models(df_filtered, use_ensemble=True)
+                    st.success("✅ 增强生成器初始化完成")
+                except Exception as e:
+                    st.error(f"❌ 增强生成器初始化失败: {e}")
+                    st.info("💡 请在侧边栏的'🚀 增强生成设置'中手动启用增强生成功能")
+                    cands = []  # 确保cands被定义
+        
+        # 只有在初始化成功后才继续
+        if enhanced_generator.markov_models or enhanced_generator.use_ensemble:
+            # 检查是否有选中的策略
+            if st.session_state.selected_strategy:
+                # 加载策略参数（与单轮生成相同的逻辑）
+                strategy_params = load_strategy(st.session_state.selected_strategy)
+                if strategy_params:
+                    st.info(f"🔧 使用策略参数进行两轮对比生成")
+                    
+                    # 从策略中获取参数（复用单轮生成的参数处理逻辑）
+                    use_recent_n = strategy_params.get('use_recent_n', use_recent_n)
+                    pred_count = strategy_params.get('pred_count', pred_count)
+                    min_consec = strategy_params.get('min_consec', min_consec)
+                    min_odd = strategy_params.get('min_odd', min_odd)
+                    consec_mode = strategy_params.get('consec_mode', consec_mode)
+                    consec_check_type = strategy_params.get('consec_check_type', consec_check_type)
+                    pred_selected_front = strategy_params.get('pred_selected_front', pred_selected_front)
+                    pred_selected_back = strategy_params.get('pred_selected_back', pred_selected_back)
+                    
+                    # 重新计算上下文
+                    recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
+                    generation_context = prepare_generation_context(
+                        df_window=recent_window,
+                        span=span,
+                        front_blocks_labels=front_labels,
+                        back_blocks_labels=back_labels,
+                        selected_front_blocks=pred_selected_front,
+                        selected_back_blocks=pred_selected_back,
+                    )
+                    exclude_front, exclude_back = compute_exclusions(
+                        generation_context["front_freq_map"],
+                        generation_context["back_freq_map"],
+                        exclude_top_n,
+                        exclude_top_front_n,
+                        exclude_top_back_n
+                    )
+            
+            # 添加变化强度控制
+            variation_strength = st.slider(
+                "第二轮变化强度", 
+                0.0, 1.0, 0.3, 0.1,
+                help="0.0表示完全基于第一轮，1.0表示完全随机",
+                key="variation_strength"
+            )
+            
+            # 组装规则
+            rules_two_round = assemble_rules(
+                base_rules=predict_rules,
+                min_consec=min_consec,
+                min_odd=min_odd,
+                exclude_front=exclude_front,
+                exclude_back=exclude_back,
+                top_n_blocks=top_n_blocks_future,
+                max_per_block=max_per_block_future,
+                random_blocks_count=random_blocks_count_future,
+                random_back_blocks_count=random_back_blocks_count_future,
+                consecutive_mode=consec_mode,
+                consecutive_check_type=consec_check_type
+            )
+            
+            # 执行两轮生成
+            with st.spinner("正在进行两轮对比生成..."):
+                try:
+                    two_round_result = enhanced_generator.generate_two_rounds(
+                        count=pred_count,
+                        rules=rules_two_round,
+                        front_blocks=generation_context["front_blocks"],
+                        back_blocks=generation_context["back_blocks"],
+                        front_weights=generation_context["front_weights"],
+                        back_weights=generation_context["back_weights"],
+                        selected_front_blocks=pred_selected_front,
+                        selected_back_blocks=pred_selected_back,
+                        historical_data=recent_window,
+                        use_markov=use_markov_tab4,
+                        use_big_data=use_big_data_tab4,
+                        markov_weight=markov_weight_tab4,
+                        big_data_weight=big_data_weight_tab4,
+                        traditional_weight=traditional_weight_tab4,
+                        variation_strength=variation_strength
+                    )
+                
+                    if 'error' in two_round_result:
+                        st.error(f"两轮生成失败: {two_round_result['error']}")
+                        # 设置空的cands以避免后续错误
+                        cands = []
+                    else:
+                        # 设置cands为第一轮结果，以便后续显示逻辑正常工作
+                        cands = two_round_result.get('first_round', [])
+                        # 显示两轮结果
+                        st.success("🎯 两轮对比生成完成！")
+                        
+                        # 创建两轮对比的标签页
+                        round_tabs = st.tabs(["🥇 第一轮结果", "🥈 第二轮结果", "📊 对比分析", "🎯 中奖分析"])
+                    
+                    # 第一轮结果
+                    with round_tabs[0]:
+                        st.subheader("第一轮生成结果")
+                        first_round = two_round_result['first_round']
+                        
+                        first_round_df = pd.DataFrame([
+                            {
+                                "序号": i+1,
+                                "前区": ",".join(map(str, c["front"])),
+                                "后区": ",".join(map(str, c["back"])),
+                                "生成方法": c.get('generation_method', 'unknown'),
+                                "置信度": f"{c.get('markov_confidence', 0):.3f}" if 'markov_confidence' in c else f"{c.get('ensemble_confidence', 0):.3f}"
+                            }
+                            for i, c in enumerate(first_round)
+                        ])
+                        
+                        st.dataframe(first_round_df, use_container_width=True, hide_index=True)
+                        
+                        # 第一轮号码分析
+                        if 'first_round_analysis' in two_round_result:
+                            with st.expander("📈 第一轮号码特征分析"):
+                                analysis = two_round_result['first_round_analysis']
+                                
+                                # 显示热门号码
+                                if 'recommendations' in analysis and 'hot_numbers' in analysis['recommendations']:
+                                    hot_nums = analysis['recommendations']['hot_numbers']
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.write("**热门前区号码:**", hot_nums.get('front', [])[:10])
+                                    with col2:
+                                        st.write("**热门后区号码:**", hot_nums.get('back', [])[:6])
+                                
+                                # 显示模式特征
+                                if 'pattern_analysis' in analysis:
+                                    st.write("**模式特征:**")
+                                    patterns = analysis['pattern_analysis']
+                                    for pattern_name, stats in patterns.items():
+                                        if isinstance(stats, dict) and 'mean' in stats:
+                                            st.write(f"- {pattern_name}: 平均值 {stats['mean']:.2f}")
+                    
+                    # 第二轮结果
+                    with round_tabs[1]:
+                        st.subheader("第二轮生成结果")
+                        second_round = two_round_result['second_round']
+                        
+                        second_round_df = pd.DataFrame([
+                            {
+                                "序号": i+1,
+                                "前区": ",".join(map(str, c["front"])),
+                                "后区": ",".join(map(str, c["back"])),
+                                "生成方法": c.get('generation_method', 'secondary'),
+                                "变化强度": f"{c.get('variation_strength', variation_strength):.1f}"
+                            }
+                            for i, c in enumerate(second_round)
+                        ])
+                        
+                        st.dataframe(second_round_df, use_container_width=True, hide_index=True)
+                        
+                        st.info(f"第二轮基于第一轮结果生成，变化强度: {variation_strength:.1f}")
+                    
+                    # 对比分析
+                    with round_tabs[2]:
+                        st.subheader("两轮对比分析")
+                        
+                        if 'comparison' in two_round_result:
+                            comparison = two_round_result['comparison']
+                            
+                            # 重叠分析
+                            if 'overlap_analysis' in comparison:
+                                overlap = comparison['overlap_analysis']
+                                
+                                st.write("**号码重叠情况:**")
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("前区重叠号码", len(overlap.get('front_overlap', [])))
+                                    st.write("重叠号码:", overlap.get('front_overlap', []))
+                                with col2:
+                                    st.metric("后区重叠号码", len(overlap.get('back_overlap', [])))
+                                    st.write("重叠号码:", overlap.get('back_overlap', []))
+                                
+                                st.write("**重叠比例:**")
+                                col3, col4 = st.columns(2)
+                                with col3:
+                                    st.metric("前区重叠比例", f"{overlap.get('front_overlap_ratio', 0):.2%}")
+                                with col4:
+                                    st.metric("后区重叠比例", f"{overlap.get('back_overlap_ratio', 0):.2%}")
+                            
+                            # 轮次分析
+                            if 'round_analysis' in comparison:
+                                round_analysis = comparison['round_analysis']
+                                
+                                st.write("**各轮统计:**")
+                                round_stats_df = pd.DataFrame([
+                                    {
+                                        "轮次": "第一轮",
+                                        "候选数量": round_analysis.get('first_round', {}).get('candidate_count', 0),
+                                        "独特前区号码": round_analysis.get('first_round', {}).get('unique_front_numbers', 0),
+                                        "独特后区号码": round_analysis.get('first_round', {}).get('unique_back_numbers', 0)
+                                    },
+                                    {
+                                        "轮次": "第二轮",
+                                        "候选数量": round_analysis.get('second_round', {}).get('candidate_count', 0),
+                                        "独特前区号码": round_analysis.get('second_round', {}).get('unique_front_numbers', 0),
+                                        "独特后区号码": round_analysis.get('second_round', {}).get('unique_back_numbers', 0)
+                                    }
+                                ])
+                                
+                                st.dataframe(round_stats_df, use_container_width=True, hide_index=True)
+                    
+                    # 中奖分析（需要用户输入实际开奖结果）
+                    with round_tabs[3]:
+                        st.subheader("中奖情况分析")
+                        
+                        st.write("请输入实际开奖结果进行中奖分析：")
+                        
+                        hit_col1, hit_col2 = st.columns(2)
+                        with hit_col1:
+                            actual_front_input = st.text_input("实际前区号码（逗号分隔）", key="actual_front_two_round")
+                        with hit_col2:
+                            actual_back_input = st.text_input("实际后区号码（逗号分隔）", key="actual_back_two_round")
+                        
+                        if st.button("分析中奖情况", key="analyze_hits_two_round"):
+                            if actual_front_input and actual_back_input:
+                                try:
+                                    actual_front = [int(x.strip()) for x in actual_front_input.replace("，", ",").split(",") if x.strip().isdigit()]
+                                    actual_back = [int(x.strip()) for x in actual_back_input.replace("，", ",").split(",") if x.strip().isdigit()]
+                                    
+                                    if len(actual_front) == 5 and len(actual_back) == 2:
+                                        actual_result = {'front': actual_front, 'back': actual_back}
+                                        
+                                        hit_analysis = enhanced_generator.analyze_hit_performance(
+                                            first_round, second_round, actual_result
+                                        )
+                                        
+                                        if 'hit_analysis' in hit_analysis:
+                                            hit_data = hit_analysis['hit_analysis']
+                                            
+                                            # 显示命中统计
+                                            st.write("**命中统计对比:**")
+                                            
+                                            hit_comparison_df = pd.DataFrame([
+                                                {
+                                                    "轮次": "第一轮",
+                                                    "平均前区命中": f"{hit_data['first_round']['average_front_hits']:.2f}",
+                                                    "平均后区命中": f"{hit_data['first_round']['average_back_hits']:.2f}",
+                                                    "平均总命中": f"{hit_data['first_round']['average_total_hits']:.2f}",
+                                                    "最佳候选命中": hit_data['first_round']['best_candidate']['total_hits'] if hit_data['first_round']['best_candidate'] else 0
+                                                },
+                                                {
+                                                    "轮次": "第二轮",
+                                                    "平均前区命中": f"{hit_data['second_round']['average_front_hits']:.2f}",
+                                                    "平均后区命中": f"{hit_data['second_round']['average_back_hits']:.2f}",
+                                                    "平均总命中": f"{hit_data['second_round']['average_total_hits']:.2f}",
+                                                    "最佳候选命中": hit_data['second_round']['best_candidate']['total_hits'] if hit_data['second_round']['best_candidate'] else 0
+                                                }
+                                            ])
+                                            
+                                            st.dataframe(hit_comparison_df, use_container_width=True, hide_index=True)
+                                            
+                                            # 显示改进情况
+                                            if 'comparison' in hit_data:
+                                                comp = hit_data['comparison']
+                                                better_round = comp.get('better_round', 'unknown')
+                                                improvement = comp.get('improvement', 0)
+                                                
+                                                if better_round == 'second':
+                                                    st.success(f"🎉 第二轮表现更好！平均命中提升了 {improvement:.2f} 个号码")
+                                                elif better_round == 'first':
+                                                    st.info(f"第一轮表现更好，第二轮平均命中下降了 {abs(improvement):.2f} 个号码")
+                                                else:
+                                                    st.info("两轮表现相当")
+                                            
+                                            # 显示详细命中情况
+                                            with st.expander("详细命中情况"):
+                                                st.write("**第一轮详细命中:**")
+                                                for hit in hit_data['first_round']['individual_hits']:
+                                                    st.write(f"候选{hit['candidate_index']+1}: 前区{hit['front_hits']}中, 后区{hit['back_hits']}中, 总计{hit['total_hits']}中")
+                                                
+                                                st.write("**第二轮详细命中:**")
+                                                for hit in hit_data['second_round']['individual_hits']:
+                                                    st.write(f"候选{hit['candidate_index']+1}: 前区{hit['front_hits']}中, 后区{hit['back_hits']}中, 总计{hit['total_hits']}中")
+                                    else:
+                                        st.error("请输入正确的号码格式（前区5个号码，后区2个号码）")
+                                except ValueError:
+                                    st.error("请输入有效的数字")
+                            else:
+                                st.warning("请输入完整的开奖结果")
+                        
+                        # 显示使用说明
+                        with st.expander("💡 使用说明"):
+                            st.markdown("""
+                            **两轮对比生成的优势：**
+                            
+                            1. **第一轮**：使用完整的预测算法生成基础候选号码
+                            2. **第二轮**：基于第一轮结果的特征和规律，生成变化版本
+                            3. **对比分析**：通过对比两轮结果，可以：
+                               - 发现号码选择的一致性和差异性
+                               - 评估不同变化强度的效果
+                               - 提供更多样化的选号参考
+                            
+                            **变化强度说明：**
+                            - 0.0：第二轮完全基于第一轮的热门号码
+                            - 0.5：平衡使用第一轮特征和随机性
+                            - 1.0：第二轮基本随机生成
+                            
+                            **建议使用方式：**
+                            - 可以同时投注两轮结果，增加中奖机会
+                            - 比较两轮的中奖表现，优化未来的生成策略
+                            - 根据历史表现调整变化强度参数
+                            """)
+                
+                except Exception as e:
+                    st.error(f"两轮生成过程中出现错误: {e}")
+                    # 设置空的cands以避免后续错误
+                    cands = []
+                    import traceback
+                    with st.expander("错误详情"):
+                        st.code(traceback.format_exc())
+        else:
+            # 初始化失败的情况
+            cands = []
+
     # 使用Tabs布局显示未来预测和历史回测
     if (generate_button and len(cands) > 0) or backtest_n > 0:
         result_tabs = st.tabs(["🔮 未来预测号码", "📊 历史回测结果", "📈 未来多期回测"])
@@ -1299,6 +1848,15 @@ with tab_predict:
             if generate_button and len(cands) > 0:
                 if use_ai_model:
                     st.info(f"🤖 使用AI模型（{st.session_state.get('model_type', 'unknown')}）生成")
+                
+                if use_enhanced_tab4:
+                    st.info(f"🚀 使用增强生成（马尔可夫链 + 大数据分析）")
+                    
+                    # 显示增强生成统计
+                    if cands and any('markov_confidence' in c for c in cands):
+                        avg_markov_conf = np.mean([c.get('markov_confidence', 0.5) for c in cands])
+                        avg_big_data_score = np.mean([c.get('big_data_score', 0.5) for c in cands])
+                        st.caption(f"平均马尔可夫置信度: {avg_markov_conf:.3f} | 平均大数据评分: {avg_big_data_score:.3f}")
                 
                 # 使用表格形式显示
                 with st.container():
