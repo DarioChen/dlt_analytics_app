@@ -286,6 +286,36 @@ class EnsemblePredictor:
         
         print("集成预测器训练完成")
     
+    def train_lightweight(self, df: pd.DataFrame):
+        """轻量级训练，仅训练核心预测器"""
+        print("训练轻量级集成预测器...")
+        
+        # 仅训练核心预测器
+        core_predictors = ['frequency', 'markov']
+        
+        for name in core_predictors:
+            if name in self.predictors:
+                try:
+                    print(f"训练 {name} 预测器...")
+                    if name == 'markov':
+                        # 使用简化的马尔可夫链训练
+                        self.predictors[name].train(df)
+                    else:
+                        self.predictors[name].train(df)
+                except Exception as e:
+                    print(f"训练 {name} 预测器失败: {e}")
+        
+        # 使用默认权重，跳过复杂的权重调整
+        self.weights = {
+            'frequency': 0.4,
+            'markov': 0.6,
+            'trend': 0.0,
+            'cyclical': 0.0,
+            'big_data': 0.0
+        }
+        
+        print("轻量级集成预测器训练完成")
+    
     def _update_weights(self, df: pd.DataFrame, validation_periods: int = 20):
         """基于历史表现动态调整权重"""
         if len(df) < validation_periods + 10:
@@ -364,6 +394,8 @@ class EnsemblePredictor:
     
     def predict_enhanced(self, recent_data: pd.DataFrame, count: int = 5) -> List[Dict]:
         """集成预测"""
+        print(f"集成预测器开始生成 {count} 个候选号码...")
+        
         # 获取各预测器的预测结果
         all_predictions = {}
         
@@ -387,19 +419,69 @@ class EnsemblePredictor:
                 print(f"预测器 {name} 预测失败: {e}")
                 continue
         
+        if not all_predictions:
+            print("所有预测器都失败，使用随机生成")
+            return self._generate_random_candidates(count)
+        
         # 集成预测结果
         ensemble_front_probs, ensemble_back_probs = self._ensemble_predictions(all_predictions)
         
-        # 生成候选号码
+        # 生成更多候选号码，确保有足够的选择
+        max_attempts = count * 10  # 生成更多候选
         candidates = self._generate_candidates_from_probs(
-            ensemble_front_probs, ensemble_back_probs, count * 3  # 生成更多候选，然后过滤
+            ensemble_front_probs, ensemble_back_probs, max_attempts
         )
         
-        # 应用智能过滤
-        filtered_candidates = self.smart_filter.apply_filters(candidates, recent_data)
+        print(f"初步生成了 {len(candidates)} 个候选号码")
+        
+        # 应用智能过滤（但确保至少保留count个）
+        try:
+            # 先尝试温和过滤
+            filtered_candidates = self.smart_filter.apply_gentle_filters(candidates, recent_data)
+            print(f"温和过滤后剩余 {len(filtered_candidates)} 个候选号码")
+            
+            # 如果温和过滤后仍然不足，使用更宽松的过滤
+            if len(filtered_candidates) < count:
+                print("温和过滤后候选不足，使用宽松过滤")
+                filtered_candidates = candidates[:count * 2]  # 直接取前面的候选
+                
+        except Exception as e:
+            print(f"智能过滤失败: {e}，使用原始候选")
+            filtered_candidates = candidates
+        
+        # 确保返回足够的候选号码
+        if len(filtered_candidates) < count:
+            print(f"过滤后候选不足({len(filtered_candidates)}<{count})，补充随机候选")
+            # 补充随机候选
+            additional_needed = count - len(filtered_candidates)
+            additional_candidates = self._generate_random_candidates(additional_needed)
+            filtered_candidates.extend(additional_candidates)
+        
+        # 如果还是不够，直接从原始候选中补充
+        if len(filtered_candidates) < count:
+            print(f"仍然不足，从原始候选中补充")
+            remaining_candidates = [c for c in candidates if c not in filtered_candidates]
+            needed = count - len(filtered_candidates)
+            filtered_candidates.extend(remaining_candidates[:needed])
         
         # 返回前count个结果
-        return filtered_candidates[:count]
+        result = filtered_candidates[:count]
+        print(f"最终返回 {len(result)} 个候选号码")
+        return result
+    
+    def _generate_random_candidates(self, count: int) -> List[Dict]:
+        """生成随机候选号码作为备选"""
+        candidates = []
+        for i in range(count):
+            front = sorted(random.sample(range(1, 36), 5))
+            back = sorted(random.sample(range(1, 13), 2))
+            candidates.append({
+                'front': front,
+                'back': back,
+                'generation_method': 'random_fallback',
+                'ensemble_confidence': 0.1
+            })
+        return candidates
     
     def _big_data_to_probs(self) -> Tuple[Dict[int, float], Dict[int, float]]:
         """将大数据洞察转换为概率"""

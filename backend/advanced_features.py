@@ -322,6 +322,36 @@ class SmartFilter:
         # 按分数排序，返回前50%
         scored_candidates.sort(key=lambda x: x['filter_score'], reverse=True)
         return scored_candidates[:len(scored_candidates)//2]
+    
+    def apply_gentle_filters(self, candidates: List[Dict], historical_data: pd.DataFrame) -> List[Dict]:
+        """应用温和过滤器（保留更多候选）"""
+        if not self.filters:
+            return candidates
+        
+        scored_candidates = []
+        
+        for candidate in candidates:
+            total_score = 0
+            total_weight = 0
+            
+            for filter_func, weight in self.filters:
+                try:
+                    score = filter_func(candidate, historical_data)
+                    total_score += score * weight
+                    total_weight += weight
+                except Exception:
+                    # 如果过滤器失败，给予中等分数
+                    total_score += 0.5 * weight
+                    total_weight += weight
+            
+            if total_weight > 0:
+                avg_score = total_score / total_weight
+                candidate['filter_score'] = avg_score
+                scored_candidates.append(candidate)
+        
+        # 按分数排序，返回前80%（更宽松）
+        scored_candidates.sort(key=lambda x: x['filter_score'], reverse=True)
+        return scored_candidates[:int(len(scored_candidates) * 0.8)]
 
 
 def historical_avoidance_filter(candidate: Dict, historical_data: pd.DataFrame, 

@@ -100,6 +100,177 @@ def delete_strategy(filename):
         return True
     return False
 
+
+def perform_two_round_backtest(df_filtered, enhanced_generator, periods, count, rules, 
+                              generation_context, pred_selected_front, pred_selected_back,
+                              use_markov, use_big_data, markov_weight, big_data_weight, 
+                              traditional_weight, variation_strength, include_recombination,
+                              ticket_cost, prize_structure):
+    """
+    执行两轮生成的历史回测
+    
+    Args:
+        df_filtered: 过滤后的历史数据
+        enhanced_generator: 增强生成器实例
+        periods: 回测期数
+        count: 每轮生成数量
+        rules: 生成规则
+        generation_context: 生成上下文
+        pred_selected_front: 选中的前区区块
+        pred_selected_back: 选中的后区区块
+        use_markov: 是否使用马尔可夫链
+        use_big_data: 是否使用大数据分析
+        markov_weight: 马尔可夫链权重
+        big_data_weight: 大数据分析权重
+        traditional_weight: 传统方法权重
+        variation_strength: 变化强度
+        include_recombination: 是否包含重组模式回测
+        ticket_cost: 单注成本
+        prize_structure: 奖金结构
+        
+    Returns:
+        回测结果字典
+    """
+    print(f"开始两轮生成历史回测，回测期数: {periods}")
+    
+    # 准备回测数据
+    if len(df_filtered) < periods + 50:  # 确保有足够的历史数据
+        raise ValueError(f"历史数据不足，需要至少 {periods + 50} 期数据")
+    
+    # 选择回测数据（最近的periods期作为测试集）
+    test_data = df_filtered.tail(periods).reset_index(drop=True)
+    
+    results = {
+        'summary': {},
+        'details': {}
+    }
+    
+    # 测试模式列表
+    test_modes = [
+        {'name': '传统模式第一轮', 'use_recombination': False, 'round': 'first'},
+        {'name': '传统模式第二轮', 'use_recombination': False, 'round': 'second'}
+    ]
+    
+    if include_recombination:
+        test_modes.extend([
+            {'name': '重组模式第一轮', 'use_recombination': True, 'round': 'first'},
+            {'name': '重组模式第二轮', 'use_recombination': True, 'round': 'second'}
+        ])
+    
+    for mode in test_modes:
+        print(f"回测模式: {mode['name']}")
+        
+        mode_results = []
+        total_cost = 0.0
+        total_return = 0.0
+        hit_count = 0
+        
+        for i in range(periods):
+            # 获取训练数据（当前测试期之前的所有数据）
+            train_end_idx = len(df_filtered) - periods + i
+            train_data = df_filtered.iloc[:train_end_idx]
+            
+            if len(train_data) < 20:  # 确保有足够的训练数据
+                continue
+            
+            # 获取测试期的实际开奖结果
+            test_row = test_data.iloc[i]
+            actual_front = test_row[['f1', 'f2', 'f3', 'f4', 'f5']].tolist()
+            actual_back = test_row[['b1', 'b2']].tolist()
+            
+            try:
+                # 生成两轮号码
+                two_round_result = enhanced_generator.generate_two_rounds(
+                    count=count,
+                    rules=rules,
+                    front_blocks=generation_context["front_blocks"],
+                    back_blocks=generation_context["back_blocks"],
+                    front_weights=generation_context["front_weights"],
+                    back_weights=generation_context["back_weights"],
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back,
+                    historical_data=train_data.tail(100),  # 使用最近100期作为训练数据
+                    use_markov=use_markov,
+                    use_big_data=use_big_data,
+                    markov_weight=markov_weight,
+                    big_data_weight=big_data_weight,
+                    traditional_weight=traditional_weight,
+                    variation_strength=variation_strength,
+                    use_recombination=mode['use_recombination']
+                )
+                
+                if 'error' in two_round_result:
+                    print(f"第{i+1}期生成失败: {two_round_result['error']}")
+                    continue
+                
+                # 选择对应轮次的候选号码
+                if mode['round'] == 'first':
+                    candidates = two_round_result.get('first_round', [])
+                else:
+                    candidates = two_round_result.get('second_round', [])
+                
+                if not candidates:
+                    print(f"第{i+1}期{mode['round']}轮候选号码为空")
+                    continue
+                
+                # 计算本期成本和收益
+                period_cost = len(candidates) * ticket_cost
+                period_return = 0.0
+                period_hits = 0
+                
+                for candidate in candidates:
+                    # 检查中奖情况
+                    prize_name = check_prize(
+                        candidate['front'], candidate['back'],
+                        actual_front, actual_back
+                    )
+                    
+                    if prize_name != "未中奖":
+                        period_return += prize_structure.get(prize_name, 0)
+                        period_hits += 1
+                
+                total_cost += period_cost
+                total_return += period_return
+                if period_hits > 0:
+                    hit_count += 1
+                
+                # 记录详细结果
+                mode_results.append({
+                    "期数": i + 1,
+                    "期号": test_row.get('issue', f'期{i+1}'),
+                    "开奖前区": ",".join(map(str, actual_front)),
+                    "开奖后区": ",".join(map(str, actual_back)),
+                    "投注数": len(candidates),
+                    "投注成本": f"{period_cost:.2f}元",
+                    "中奖金额": f"{period_return:.2f}元",
+                    "净收益": f"{period_return - period_cost:.2f}元",
+                    "中奖注数": period_hits
+                })
+                
+            except Exception as e:
+                print(f"第{i+1}期回测失败: {e}")
+                continue
+        
+        # 计算模式统计
+        net_profit = total_return - total_cost
+        roi = (net_profit / total_cost * 100) if total_cost > 0 else 0
+        hit_rate = (hit_count / periods * 100) if periods > 0 else 0
+        
+        results['summary'][mode['name']] = {
+            'total_cost': total_cost,
+            'total_return': total_return,
+            'net_profit': net_profit,
+            'roi': roi / 100,  # 转换为小数形式
+            'hit_count': hit_count,
+            'hit_rate': hit_rate / 100  # 转换为小数形式
+        }
+        
+        results['details'][mode['name']] = mode_results
+    
+    print("两轮生成历史回测完成")
+    return results
+    return False
+
 # --------------------- 数据筛选器（全局） ---------------------
 st.sidebar.header("🔎 数据筛选器（全局）")
 start_issue = st.sidebar.text_input("起始期号", value="")
@@ -1092,6 +1263,42 @@ with tab_predict:
                 big_data_weight_tab4 = 0.0
                 traditional_weight_tab4 = 1.0
         
+        # 两轮生成设置
+        with st.expander("🔄 两轮生成设置", expanded=False):
+            st.write("配置两轮对比生成的参数")
+            
+            # 变化强度设置
+            variation_strength_sidebar = st.slider(
+                "第二轮变化强度", 
+                0.0, 1.0, 0.3, 0.1,
+                help="0.0表示完全基于第一轮，1.0表示完全随机",
+                key="variation_strength_sidebar"
+            )
+            
+            # 重组模式设置
+            st.subheader("重组模式")
+            
+            # 初始化重组模式状态（如果不存在）
+            if 'recombination_mode' not in st.session_state:
+                st.session_state.recombination_mode = False
+            
+            use_recombination = st.checkbox(
+                "🔄 启用重组模式", 
+                value=st.session_state.recombination_mode,
+                help="启用后，第二轮号码将仅从第一轮生成的号码中重新组合，不会引入新号码",
+                key="use_recombination_sidebar"
+            )
+            
+            # 同步状态
+            st.session_state.recombination_mode = use_recombination
+            
+            if use_recombination:
+                st.success("🔄 重组模式已启用")
+                st.caption("第二轮将仅使用第一轮号码进行重新组合")
+            else:
+                st.info("🎯 传统模式")
+                st.caption("第二轮基于第一轮特征生成新号码")
+        
         # 策略管理
         with st.expander("💾 策略管理", expanded=False):
             st.write("管理您的预测策略")
@@ -1510,21 +1717,23 @@ with tab_predict:
 
     # 两轮对比生成逻辑
     if two_round_button:
-        # 首先检查增强生成器是否已初始化
-        if not enhanced_generator.markov_models and not enhanced_generator.use_ensemble:
-            st.info("🔄 增强生成器未初始化，正在自动初始化...")
+        # 检查增强生成器是否已初始化
+        is_initialized = (enhanced_generator.markov_models or enhanced_generator.use_ensemble)
+        
+        if not is_initialized:
             with st.spinner("正在初始化增强生成器..."):
                 try:
                     # 自动使用集成学习进行初始化
                     enhanced_generator.initialize_models(df_filtered, use_ensemble=True)
+                    is_initialized = True
                     st.success("✅ 增强生成器初始化完成")
                 except Exception as e:
                     st.error(f"❌ 增强生成器初始化失败: {e}")
                     st.info("💡 请在侧边栏的'🚀 增强生成设置'中手动启用增强生成功能")
-                    cands = []  # 确保cands被定义
+                    is_initialized = False
         
         # 只有在初始化成功后才继续
-        if enhanced_generator.markov_models or enhanced_generator.use_ensemble:
+        if is_initialized:
             # 检查是否有选中的策略
             if st.session_state.selected_strategy:
                 # 加载策略参数（与单轮生成相同的逻辑）
@@ -1560,13 +1769,12 @@ with tab_predict:
                         exclude_top_back_n
                     )
             
-            # 添加变化强度控制
-            variation_strength = st.slider(
-                "第二轮变化强度", 
-                0.0, 1.0, 0.3, 0.1,
-                help="0.0表示完全基于第一轮，1.0表示完全随机",
-                key="variation_strength"
-            )
+            # 获取侧边栏的两轮生成设置
+            variation_strength = st.session_state.get('variation_strength_sidebar', 0.3)
+            use_recombination = st.session_state.get('recombination_mode', False)
+            
+            # 显示当前设置
+            st.info(f"🎯 两轮生成设置：变化强度 {variation_strength:.1f}，模式：{'🔄 重组' if use_recombination else '🎯 传统'}")
             
             # 组装规则
             rules_two_round = assemble_rules(
@@ -1601,7 +1809,8 @@ with tab_predict:
                         markov_weight=markov_weight_tab4,
                         big_data_weight=big_data_weight_tab4,
                         traditional_weight=traditional_weight_tab4,
-                        variation_strength=variation_strength
+                        variation_strength=variation_strength,
+                        use_recombination=use_recombination
                     )
                 
                     if 'error' in two_round_result:
@@ -1668,6 +1877,7 @@ with tab_predict:
                                 "前区": ",".join(map(str, c["front"])),
                                 "后区": ",".join(map(str, c["back"])),
                                 "生成方法": c.get('generation_method', 'secondary'),
+                                "重组策略": c.get('recombination_strategy', '传统') if use_recombination else '传统',
                                 "变化强度": f"{c.get('variation_strength', variation_strength):.1f}"
                             }
                             for i, c in enumerate(second_round)
@@ -1675,7 +1885,22 @@ with tab_predict:
                         
                         st.dataframe(second_round_df, use_container_width=True, hide_index=True)
                         
-                        st.info(f"第二轮基于第一轮结果生成，变化强度: {variation_strength:.1f}")
+                        if use_recombination:
+                            st.info(f"🔄 第二轮使用重组模式生成，仅从第一轮号码中重新组合，变化强度: {variation_strength:.1f}")
+                            
+                            # 显示号码池信息
+                            if second_round:
+                                first_round = two_round_result.get('first_round', [])
+                                if first_round:
+                                    all_front = set()
+                                    all_back = set()
+                                    for cand in first_round:
+                                        all_front.update(cand['front'])
+                                        all_back.update(cand['back'])
+                                    
+                                    st.caption(f"号码池 - 前区: {sorted(all_front)} ({len(all_front)}个) | 后区: {sorted(all_back)} ({len(all_back)}个)")
+                        else:
+                            st.info(f"第二轮基于第一轮结果生成，变化强度: {variation_strength:.1f}")
                     
                     # 对比分析
                     with round_tabs[2]:
