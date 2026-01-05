@@ -265,6 +265,29 @@ class SecondaryGenerator:
         """
         传统的第二轮生成方法（原有逻辑）
         """
+        # 提取第一轮所有号码作为号码池
+        all_front_numbers = set()
+        all_back_numbers = set()
+        
+        for candidate in first_round_candidates:
+            all_front_numbers.update(candidate['front'])
+            all_back_numbers.update(candidate['back'])
+        
+        front_pool = list(all_front_numbers)
+        back_pool = list(all_back_numbers)
+        
+        print(f"传统第二轮号码池 - 前区: {sorted(front_pool)} ({len(front_pool)}个)")
+        print(f"传统第二轮号码池 - 后区: {sorted(back_pool)} ({len(back_pool)}个)")
+        
+        # 检查号码池是否足够
+        if len(front_pool) < 5:
+            print(f"警告: 前区号码池不足({len(front_pool)}<5)，无法生成完整组合")
+            return []
+        
+        if len(back_pool) < 2:
+            print(f"警告: 后区号码池不足({len(back_pool)}<2)，无法生成完整组合")
+            return []
+        
         # 分析第一轮号码
         analysis = self.analyze_first_round(first_round_candidates)
         
@@ -272,8 +295,10 @@ class SecondaryGenerator:
         
         # 尝试生成指定数量的候选号码
         for i in range(count):
-            # 生成第二轮号码
-            candidate = self._generate_single_candidate(analysis, variation_strength, i)
+            # 生成第二轮号码（限制在第一轮号码池内）
+            candidate = self._generate_single_candidate_from_pool(
+                analysis, variation_strength, i, front_pool, back_pool
+            )
             if candidate:
                 candidate['generation_method'] = 'secondary'
                 candidate['round'] = 2
@@ -281,27 +306,181 @@ class SecondaryGenerator:
                 candidate['based_on_first_round'] = True
                 second_round_candidates.append(candidate)
         
-        # 如果生成数量不足，使用随机生成补充
+        # 如果生成数量不足，使用第一轮号码池随机生成补充
         if len(second_round_candidates) < count:
-            print(f"第二轮传统生成不足({len(second_round_candidates)}<{count})，使用随机生成补充")
+            print(f"第二轮传统生成不足({len(second_round_candidates)}<{count})，从第一轮号码池随机生成补充")
             
             import random
             
             for i in range(count - len(second_round_candidates)):
-                # 基于第一轮特征生成随机候选
-                front_nums = sorted(random.sample(range(1, 36), 5))
-                back_nums = sorted(random.sample(range(1, 13), 2))
-                
-                second_round_candidates.append({
-                    'front': front_nums,
-                    'back': back_nums,
-                    'generation_method': 'secondary_random',
-                    'round': 2,
-                    'variation_strength': variation_strength,
-                    'based_on_first_round': True
-                })
+                # 从第一轮号码池中随机选择
+                if len(front_pool) >= 5 and len(back_pool) >= 2:
+                    front_nums = sorted(random.sample(front_pool, 5))
+                    back_nums = sorted(random.sample(back_pool, 2))
+                    
+                    second_round_candidates.append({
+                        'front': front_nums,
+                        'back': back_nums,
+                        'generation_method': 'secondary_random_from_pool',
+                        'round': 2,
+                        'variation_strength': variation_strength,
+                        'based_on_first_round': True
+                    })
         
         return second_round_candidates[:count]
+    
+    def _generate_single_candidate_from_pool(self, analysis: Dict, variation_strength: float, seed: int, 
+                                           front_pool: List[int], back_pool: List[int]) -> Optional[Dict]:
+        """生成单个第二轮候选号码（限制在第一轮号码池内）"""
+        import random
+        random.seed(seed + 1000)  # 确保可重现性
+        
+        recommendations = analysis.get('recommendations', {})
+        hot_numbers = recommendations.get('hot_numbers', {})
+        preferred_patterns = recommendations.get('preferred_patterns', {})
+        
+        # 生成前区号码（限制在第一轮号码池内）
+        front_nums = self._generate_front_numbers_from_pool(
+            hot_numbers, preferred_patterns, variation_strength, front_pool
+        )
+        if len(front_nums) != 5:
+            return None
+        
+        # 生成后区号码（限制在第一轮号码池内）
+        back_nums = self._generate_back_numbers_from_pool(hot_numbers, variation_strength, back_pool)
+        if len(back_nums) != 2:
+            return None
+        
+        return {
+            'front': sorted(front_nums),
+            'back': sorted(back_nums)
+        }
+    
+    def _generate_front_numbers_from_pool(self, hot_numbers: Dict, preferred_patterns: Dict, 
+                                        variation_strength: float, front_pool: List[int]) -> List[int]:
+        """从第一轮号码池生成前区号码"""
+        import random
+        
+        hot_front = hot_numbers.get('front', [])
+        
+        # 只使用在第一轮号码池中的热门号码
+        hot_front_in_pool = [n for n in hot_front if n in front_pool]
+        
+        # 计算使用热门号码的数量
+        hot_count = max(1, int(5 * (1 - variation_strength)))
+        
+        selected_numbers = set()
+        
+        # 从号码池中的热门号码中选择
+        if hot_front_in_pool and hot_count > 0:
+            available_hot = [n for n in hot_front_in_pool if n not in selected_numbers]
+            if available_hot:
+                selected_hot = random.sample(available_hot, min(hot_count, len(available_hot)))
+                selected_numbers.update(selected_hot)
+        
+        # 从号码池中随机选择剩余号码
+        while len(selected_numbers) < 5:
+            remaining_pool = [n for n in front_pool if n not in selected_numbers]
+            if not remaining_pool:
+                break
+            
+            # 根据偏好模式调整选择概率
+            weights = self._calculate_selection_weights_from_pool(
+                remaining_pool, selected_numbers, preferred_patterns
+            )
+            
+            if sum(weights) > 0:
+                chosen = random.choices(remaining_pool, weights=weights, k=1)[0]
+                selected_numbers.add(chosen)
+            else:
+                chosen = random.choice(remaining_pool)
+                selected_numbers.add(chosen)
+        
+        return list(selected_numbers)
+    
+    def _generate_back_numbers_from_pool(self, hot_numbers: Dict, variation_strength: float, 
+                                       back_pool: List[int]) -> List[int]:
+        """从第一轮号码池生成后区号码"""
+        import random
+        
+        hot_back = hot_numbers.get('back', [])
+        
+        # 只使用在第一轮号码池中的热门号码
+        hot_back_in_pool = [n for n in hot_back if n in back_pool]
+        
+        # 计算使用热门号码的数量
+        hot_count = max(0, int(2 * (1 - variation_strength)))
+        
+        selected_numbers = set()
+        
+        # 从号码池中的热门号码中选择
+        if hot_back_in_pool and hot_count > 0:
+            available_hot = [n for n in hot_back_in_pool if n not in selected_numbers]
+            if available_hot:
+                selected_hot = random.sample(available_hot, min(hot_count, len(available_hot)))
+                selected_numbers.update(selected_hot)
+        
+        # 从号码池中随机选择剩余号码
+        while len(selected_numbers) < 2:
+            remaining_pool = [n for n in back_pool if n not in selected_numbers]
+            if not remaining_pool:
+                break
+            chosen = random.choice(remaining_pool)
+            selected_numbers.add(chosen)
+        
+        return list(selected_numbers)
+    
+    def _calculate_selection_weights_from_pool(self, candidates: List[int], selected: set, 
+                                             preferred_patterns: Dict) -> List[float]:
+        """计算候选号码的选择权重（基于号码池）"""
+        weights = [1.0] * len(candidates)
+        
+        if not preferred_patterns:
+            return weights
+        
+        # 根据奇偶偏好调整权重
+        if 'odd_count' in preferred_patterns:
+            preferred_odd = preferred_patterns['odd_count']
+            current_odd = sum(1 for n in selected if n % 2 == 1)
+            remaining_slots = 5 - len(selected)
+            
+            if remaining_slots > 0:
+                needed_odd = preferred_odd - current_odd
+                
+                for i, num in enumerate(candidates):
+                    if num % 2 == 1:  # 奇数
+                        if needed_odd > 0:
+                            weights[i] *= 1.5
+                        elif needed_odd < 0:
+                            weights[i] *= 0.5
+                    else:  # 偶数
+                        if needed_odd < remaining_slots:
+                            weights[i] *= 1.5
+                        else:
+                            weights[i] *= 0.5
+        
+        # 根据大小偏好调整权重
+        if 'large_count' in preferred_patterns:
+            preferred_large = preferred_patterns['large_count']
+            current_large = sum(1 for n in selected if n > 17)
+            remaining_slots = 5 - len(selected)
+            
+            if remaining_slots > 0:
+                needed_large = preferred_large - current_large
+                
+                for i, num in enumerate(candidates):
+                    if num > 17:  # 大号
+                        if needed_large > 0:
+                            weights[i] *= 1.3
+                        elif needed_large < 0:
+                            weights[i] *= 0.7
+                    else:  # 小号
+                        if needed_large < remaining_slots:
+                            weights[i] *= 1.3
+                        else:
+                            weights[i] *= 0.7
+        
+        return weights
     
     def generate_recombined_numbers(self, 
                                   first_round_candidates: List[Dict],

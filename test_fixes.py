@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-测试修复后的两轮生成功能 - 更新版
+测试修复后的两轮生成功能 - 严格验证版
 """
 import pandas as pd
 import sys
@@ -14,8 +14,8 @@ from backend.db import init_db, session_scope, Draw
 from backend.analysis import dataframe_from_draws
 
 def test_two_round_generation():
-    """测试两轮生成功能"""
-    print("🧪 开始测试两轮生成功能（更新版）...")
+    """测试两轮生成功能 - 严格验证第二轮号码来源"""
+    print("🧪 开始测试两轮生成功能（严格验证版）...")
     
     # 初始化数据库并获取数据
     init_db()
@@ -45,16 +45,25 @@ def test_two_round_generation():
         print(f"❌ 增强生成器初始化失败: {e}")
         return False
     
-    # 测试不同的count值
-    test_counts = [3, 5, 7]
+    # 测试不同的count值和模式
+    test_cases = [
+        {"count": 5, "mode": "traditional", "name": "传统模式"},
+        {"count": 5, "mode": "recombination", "name": "重组模式"},
+        {"count": 3, "mode": "traditional", "name": "传统模式(3个)"},
+        {"count": 3, "mode": "recombination", "name": "重组模式(3个)"},
+    ]
     
-    for count in test_counts:
-        print(f"\n🎯 测试生成 {count} 个候选号码...")
+    all_passed = True
+    
+    for test_case in test_cases:
+        count = test_case["count"]
+        use_recombination = test_case["mode"] == "recombination"
+        test_name = test_case["name"]
         
-        # 测试传统模式两轮生成
-        print(f"  传统模式测试（目标：{count}个）...")
+        print(f"\n🎯 测试 {test_name}（目标：{count}个）...")
+        
         try:
-            result_traditional = enhanced_generator.generate_two_rounds(
+            result = enhanced_generator.generate_two_rounds(
                 count=count,
                 rules={
                     "sum_front_range": [70, 140],
@@ -63,94 +72,91 @@ def test_two_round_generation():
                     "consecutive_mode": "max"
                 },
                 historical_data=df.tail(20),
-                use_recombination=False,
+                use_recombination=use_recombination,
                 variation_strength=0.3
             )
             
-            if 'error' in result_traditional:
-                print(f"    ❌ 传统模式生成失败: {result_traditional['error']}")
+            if 'error' in result:
+                print(f"    ❌ 生成失败: {result['error']}")
+                all_passed = False
                 continue
             
-            first_round = result_traditional.get('first_round', [])
-            second_round = result_traditional.get('second_round', [])
+            first_round = result.get('first_round', [])
+            second_round = result.get('second_round', [])
             
             print(f"    ✅ 第一轮生成: {len(first_round)} 个候选（期望：{count}）")
             print(f"    ✅ 第二轮生成: {len(second_round)} 个候选（期望：{count}）")
             
             # 验证数量是否正确
-            if len(first_round) == count and len(second_round) == count:
-                print(f"    🎉 传统模式数量验证通过！")
-            else:
-                print(f"    ⚠️  传统模式数量验证失败：第一轮{len(first_round)}，第二轮{len(second_round)}，期望{count}")
-            
-        except Exception as e:
-            print(f"    ❌ 传统模式测试失败: {e}")
-            continue
-        
-        # 测试重组模式两轮生成
-        print(f"  重组模式测试（目标：{count}个）...")
-        try:
-            result_recombination = enhanced_generator.generate_two_rounds(
-                count=count,
-                rules={
-                    "sum_front_range": [70, 140],
-                    "odd_even_front": [2, 3],
-                    "consecutive_count": 0,
-                    "consecutive_mode": "max"
-                },
-                historical_data=df.tail(20),
-                use_recombination=True,
-                variation_strength=0.3
-            )
-            
-            if 'error' in result_recombination:
-                print(f"    ❌ 重组模式生成失败: {result_recombination['error']}")
+            if len(first_round) != count or len(second_round) != count:
+                print(f"    ❌ 数量验证失败：第一轮{len(first_round)}，第二轮{len(second_round)}，期望{count}")
+                all_passed = False
                 continue
             
-            first_round_r = result_recombination.get('first_round', [])
-            second_round_r = result_recombination.get('second_round', [])
+            # 提取第一轮所有号码
+            first_front_pool = set()
+            first_back_pool = set()
+            for candidate in first_round:
+                first_front_pool.update(candidate['front'])
+                first_back_pool.update(candidate['back'])
             
-            print(f"    ✅ 第一轮生成: {len(first_round_r)} 个候选（期望：{count}）")
-            print(f"    ✅ 第二轮生成: {len(second_round_r)} 个候选（期望：{count}）")
+            print(f"    📊 第一轮号码池 - 前区: {sorted(first_front_pool)} ({len(first_front_pool)}个)")
+            print(f"    📊 第一轮号码池 - 后区: {sorted(first_back_pool)} ({len(first_back_pool)}个)")
             
-            # 验证数量是否正确
-            if len(first_round_r) == count and len(second_round_r) == count:
-                print(f"    🎉 重组模式数量验证通过！")
+            # 验证第二轮每个候选号码
+            validation_passed = True
+            for i, candidate in enumerate(second_round, 1):
+                front_nums = set(candidate['front'])
+                back_nums = set(candidate['back'])
+                
+                # 检查前区号码是否都在第一轮号码池中
+                front_outside = front_nums - first_front_pool
+                back_outside = back_nums - first_back_pool
+                
+                if front_outside:
+                    print(f"    ❌ 第二轮候选{i}前区包含第一轮之外的号码: {sorted(front_outside)}")
+                    print(f"        候选前区: {sorted(candidate['front'])}")
+                    print(f"        第一轮前区池: {sorted(first_front_pool)}")
+                    validation_passed = False
+                
+                if back_outside:
+                    print(f"    ❌ 第二轮候选{i}后区包含第一轮之外的号码: {sorted(back_outside)}")
+                    print(f"        候选后区: {sorted(candidate['back'])}")
+                    print(f"        第一轮后区池: {sorted(first_back_pool)}")
+                    validation_passed = False
+                
+                if not front_outside and not back_outside:
+                    print(f"    ✅ 第二轮候选{i}号码池验证通过")
+            
+            if validation_passed:
+                print(f"    🎉 {test_name}严格验证通过！")
             else:
-                print(f"    ⚠️  重组模式数量验证失败：第一轮{len(first_round_r)}，第二轮{len(second_round_r)}，期望{count}")
+                print(f"    ❌ {test_name}严格验证失败！")
+                all_passed = False
             
-            # 验证重组模式的号码池限制
-            if first_round_r and second_round_r:
-                first_front_pool = set()
-                first_back_pool = set()
-                for candidate in first_round_r:
-                    first_front_pool.update(candidate['front'])
-                    first_back_pool.update(candidate['back'])
-                
-                second_front_nums = set()
-                second_back_nums = set()
-                for candidate in second_round_r:
-                    second_front_nums.update(candidate['front'])
-                    second_back_nums.update(candidate['back'])
-                
-                # 检查第二轮号码是否都来自第一轮
-                if second_front_nums.issubset(first_front_pool) and second_back_nums.issubset(first_back_pool):
-                    print("    ✅ 重组模式号码池验证通过")
-                else:
-                    print("    ⚠️  重组模式号码池验证失败")
+            # 显示第一轮和第二轮的详细号码
+            print(f"    📋 详细号码对比:")
+            print(f"        第一轮:")
+            for i, candidate in enumerate(first_round, 1):
+                print(f"          {i}. 前区: {candidate['front']}, 后区: {candidate['back']}")
+            print(f"        第二轮:")
+            for i, candidate in enumerate(second_round, 1):
+                print(f"          {i}. 前区: {candidate['front']}, 后区: {candidate['back']}")
             
         except Exception as e:
-            print(f"    ❌ 重组模式测试失败: {e}")
-            continue
+            print(f"    ❌ {test_name}测试失败: {e}")
+            all_passed = False
+            import traceback
+            traceback.print_exc()
     
     print("\n🎉 所有测试完成！")
-    return True
+    return all_passed
 
 if __name__ == "__main__":
     success = test_two_round_generation()
     if success:
-        print("✅ 测试通过")
+        print("✅ 严格验证测试通过")
         exit(0)
     else:
-        print("❌ 测试失败")
+        print("❌ 严格验证测试失败")
         exit(1)
