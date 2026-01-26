@@ -360,7 +360,13 @@ class EnhancedNumberGenerator:
         big_data_weight: float = 0.3,
         traditional_weight: float = 0.3,
         variation_strength: float = 0.3,
-        use_recombination: bool = False
+        use_recombination: bool = False,
+        use_exclusion_pool: bool = False,
+        exclusion_pool_size: int = 100,
+        use_dynamic_pool: bool = True,
+        save_to_db: bool = True,
+        predicted_issue: str = None,
+        strategy_name: str = None
     ) -> Dict:
         """
         生成两轮号码并进行对比分析
@@ -382,12 +388,20 @@ class EnhancedNumberGenerator:
             traditional_weight: 传统方法权重
             variation_strength: 第二轮变化强度 (0-1)
             use_recombination: 是否使用重组模式（仅从第一轮号码中重新组合）
+            use_exclusion_pool: 是否使用排除池策略
+            exclusion_pool_size: 排除池大小
+            save_to_db: 是否保存到数据库
+            predicted_issue: 预测期号
+            strategy_name: 策略名称
             
         Returns:
             包含两轮结果和分析的字典
         """
         print("开始两轮号码生成...")
         print(f"重组模式: {'启用' if use_recombination else '禁用'}")
+        print(f"排除池策略: {'启用' if use_exclusion_pool else '禁用'}")
+        if use_exclusion_pool:
+            print(f"排除池大小: {exclusion_pool_size}")
         
         # 检查模型是否已初始化
         if not self.markov_models and not self.use_ensemble:
@@ -399,26 +413,67 @@ class EnhancedNumberGenerator:
                 'error': '模型未初始化，请先调用initialize_models()或启用集成学习'
             }
         
-        # 第一轮生成 - 确保生成准确数量
+        # 第一轮生成 - 根据是否使用排除池选择不同的生成策略
         print(f"生成第一轮号码（目标：{count}个）...")
         
-        # 使用更可靠的生成方法确保第一轮生成准确数量
-        first_round = self._generate_first_round_reliable(
-            count=count,
-            rules=rules,
-            front_blocks=front_blocks,
-            back_blocks=back_blocks,
-            front_weights=front_weights,
-            back_weights=back_weights,
-            selected_front_blocks=selected_front_blocks,
-            selected_back_blocks=selected_back_blocks,
-            historical_data=historical_data,
-            use_markov=use_markov,
-            use_big_data=use_big_data,
-            markov_weight=markov_weight,
-            big_data_weight=big_data_weight,
-            traditional_weight=traditional_weight
-        )
+        if use_exclusion_pool:
+            # 使用排除池策略生成第一轮
+            from .exclusion_pool_generator import exclusion_pool_generator
+            
+            exclusion_result = exclusion_pool_generator.generate_with_exclusion_pool(
+                exclusion_pool_size=exclusion_pool_size,
+                target_count=count,
+                rules=rules,
+                front_blocks=front_blocks,
+                back_blocks=back_blocks,
+                front_weights=front_weights,
+                back_weights=back_weights,
+                selected_front_blocks=selected_front_blocks,
+                selected_back_blocks=selected_back_blocks,
+                historical_data=historical_data,
+                use_enhanced=True,
+                use_dynamic_pool=use_dynamic_pool,
+                save_to_db=save_to_db,
+                predicted_issue=predicted_issue,
+                strategy_name=strategy_name,
+                generation_method="two_round_exclusion_first"
+            )
+            
+            if 'error' in exclusion_result:
+                return {
+                    'first_round': [],
+                    'second_round': [],
+                    'analysis': {},
+                    'comparison': {},
+                    'error': f'第一轮排除池生成失败: {exclusion_result["error"]}'
+                }
+            
+            first_round = exclusion_result.get('target_numbers', [])
+            exclusion_pool_info = {
+                'exclusion_pool': exclusion_result.get('exclusion_pool', []),
+                'exclusion_pool_size': exclusion_result.get('exclusion_pool_size', 0),
+                'generation_attempts': exclusion_result.get('generation_attempts', 0),
+                'db_record_id': exclusion_result.get('db_record_id')
+            }
+        else:
+            # 使用传统的可靠生成方法
+            first_round = self._generate_first_round_reliable(
+                count=count,
+                rules=rules,
+                front_blocks=front_blocks,
+                back_blocks=back_blocks,
+                front_weights=front_weights,
+                back_weights=back_weights,
+                selected_front_blocks=selected_front_blocks,
+                selected_back_blocks=selected_back_blocks,
+                historical_data=historical_data,
+                use_markov=use_markov,
+                use_big_data=use_big_data,
+                markov_weight=markov_weight,
+                big_data_weight=big_data_weight,
+                traditional_weight=traditional_weight
+            )
+            exclusion_pool_info = None
         
         print(f"第一轮实际生成：{len(first_round)}个候选号码")
         
@@ -440,12 +495,60 @@ class EnhancedNumberGenerator:
         else:
             print("基于第一轮结果生成第二轮号码...")
         
-        second_round = self.secondary_generator.generate_second_round(
-            first_round_candidates=first_round,
-            count=count,
-            variation_strength=variation_strength,
-            use_recombination=use_recombination
-        )
+        if use_exclusion_pool:
+            # 第二轮也使用排除池策略，排除池包含第一轮的所有号码
+            print("第二轮使用排除池策略...")
+            
+            from .exclusion_pool_generator import exclusion_pool_generator
+            
+            # 将第一轮结果作为排除池
+            first_round_exclusion_pool = first_round.copy()
+            if exclusion_pool_info and exclusion_pool_info.get('exclusion_pool'):
+                # 如果第一轮使用了排除池，将其也加入第二轮的排除池
+                first_round_exclusion_pool.extend(exclusion_pool_info['exclusion_pool'])
+            
+            # 创建一个临时的排除池生成器实例来处理第二轮
+            second_exclusion_result = exclusion_pool_generator.generate_with_exclusion_pool(
+                exclusion_pool_size=len(first_round_exclusion_pool),
+                target_count=count,
+                rules=rules,
+                front_blocks=front_blocks,
+                back_blocks=back_blocks,
+                front_weights=front_weights,
+                back_weights=back_weights,
+                selected_front_blocks=selected_front_blocks,
+                selected_back_blocks=selected_back_blocks,
+                historical_data=historical_data,
+                use_enhanced=True,
+                use_dynamic_pool=use_dynamic_pool,
+                save_to_db=save_to_db,
+                predicted_issue=predicted_issue,
+                strategy_name=strategy_name,
+                generation_method="two_round_exclusion_second"
+            )
+            
+            if 'error' in second_exclusion_result:
+                print(f"第二轮排除池生成失败: {second_exclusion_result['error']}")
+                # 回退到传统方法
+                second_round = self.secondary_generator.generate_second_round(
+                    first_round_candidates=first_round,
+                    count=count,
+                    variation_strength=variation_strength,
+                    use_recombination=use_recombination
+                )
+            else:
+                second_round = second_exclusion_result.get('target_numbers', [])
+                # 更新排除池信息
+                if exclusion_pool_info:
+                    exclusion_pool_info['second_round_db_record_id'] = second_exclusion_result.get('db_record_id')
+        else:
+            # 使用传统的第二轮生成方法
+            second_round = self.secondary_generator.generate_second_round(
+                first_round_candidates=first_round,
+                count=count,
+                variation_strength=variation_strength,
+                use_recombination=use_recombination
+            )
         
         # 分析第一轮结果
         print("分析第一轮号码特征...")
@@ -455,7 +558,8 @@ class EnhancedNumberGenerator:
         print("对比两轮生成结果...")
         comparison = self.secondary_generator.compare_rounds(first_round, second_round)
         
-        return {
+        # 构建返回结果
+        result = {
             'first_round': first_round,
             'second_round': second_round,
             'first_round_analysis': first_round_analysis,
@@ -463,9 +567,17 @@ class EnhancedNumberGenerator:
             'generation_params': {
                 'count': count,
                 'variation_strength': variation_strength,
-                'use_ensemble': self.use_ensemble
+                'use_ensemble': self.use_ensemble,
+                'use_exclusion_pool': use_exclusion_pool,
+                'exclusion_pool_size': exclusion_pool_size if use_exclusion_pool else 0
             }
         }
+        
+        # 如果使用了排除池，添加排除池信息
+        if use_exclusion_pool and exclusion_pool_info:
+            result['exclusion_pool_info'] = exclusion_pool_info
+        
+        return result
     
     def _generate_first_round_reliable(
         self,

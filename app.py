@@ -21,6 +21,8 @@ from backend.performance_test import PerformanceTester
 from backend.evolutionary_optimizer import create_evolutionary_optimizer, EvolutionaryConfig
 from backend.neural_predictor import create_neural_predictor, get_available_models, HAS_PYTORCH
 from backend.strategy_optimizer import create_strategy_optimizer, OptimizationConfig
+from backend.exclusion_pool_generator import exclusion_pool_generator
+from backend.exclusion_pool_db import exclusion_pool_db
 from predictor import compute_weights_from_history, prepare_generator_inputs, compute_weights_from_history_ewma
 import random
 import io
@@ -277,6 +279,7 @@ def perform_two_round_backtest(df_filtered, enhanced_generator, periods, count, 
                               generation_context, pred_selected_front, pred_selected_back,
                               use_markov, use_big_data, markov_weight, big_data_weight, 
                               traditional_weight, variation_strength, include_recombination,
+                              use_exclusion_pool, exclusion_pool_size, use_dynamic_pool,
                               ticket_cost, prize_structure):
     """
     执行两轮生成的历史回测
@@ -297,6 +300,9 @@ def perform_two_round_backtest(df_filtered, enhanced_generator, periods, count, 
         traditional_weight: 传统方法权重
         variation_strength: 变化强度
         include_recombination: 是否包含重组模式回测
+        use_exclusion_pool: 是否使用排除池
+        exclusion_pool_size: 排除池大小
+        use_dynamic_pool: 是否使用动态排除池
         ticket_cost: 单注成本
         prize_structure: 奖金结构
         
@@ -368,7 +374,10 @@ def perform_two_round_backtest(df_filtered, enhanced_generator, periods, count, 
                     big_data_weight=big_data_weight,
                     traditional_weight=traditional_weight,
                     variation_strength=variation_strength,
-                    use_recombination=mode['use_recombination']
+                    use_recombination=mode['use_recombination'],
+                    use_exclusion_pool=use_exclusion_pool,
+                    exclusion_pool_size=exclusion_pool_size,
+                    use_dynamic_pool=use_dynamic_pool
                 )
                 
                 if 'error' in two_round_result:
@@ -1428,12 +1437,51 @@ with tab_predict:
                         except Exception as e:
                             st.error(f"❌ 增强生成器初始化失败: {e}")
                             use_enhanced_tab4 = False
+                
+                # 排除池设置
+                st.subheader("排除池策略")
+                use_exclusion_pool_enhanced = st.checkbox(
+                    "🎯 启用排除池策略", 
+                    value=False,
+                    help="启用后，生成时将先创建排除池，然后生成不重复的号码",
+                    key="use_exclusion_pool_enhanced"
+                )
+                
+                if use_exclusion_pool_enhanced:
+                    exclusion_pool_size_enhanced = st.slider(
+                        "排除池大小", 
+                        min_value=50, max_value=500, value=100, step=10,
+                        help="排除池越大，生成的号码越独特，但生成难度也越高",
+                        key="exclusion_pool_size_enhanced"
+                    )
+                    
+                    # 动态/静态排除池选择
+                    use_dynamic_pool_enhanced = st.radio(
+                        "排除池类型",
+                        options=[True, False],
+                        format_func=lambda x: "🔄 动态排除池（推荐）" if x else "📋 静态排除池",
+                        index=0,  # 默认选择动态排除池
+                        help="动态排除池：每期用当前算法生成排除池，避开算法热门倾向；静态排除池：使用固定的排除池",
+                        key="use_dynamic_pool_enhanced"
+                    )
+                    
+                    if use_dynamic_pool_enhanced:
+                        st.success(f"🔄 动态排除池策略已启用（大小：{exclusion_pool_size_enhanced}）")
+                        st.caption("每期先用算法生成排除池，再生成避开这些组合的号码")
+                    else:
+                        st.info(f"📋 静态排除池策略已启用（大小：{exclusion_pool_size_enhanced}）")
+                        st.caption("使用固定的排除池策略")
+                else:
+                    exclusion_pool_size_enhanced = 100  # 默认值
+                    use_dynamic_pool_enhanced = True  # 默认值
             else:
                 use_markov_tab4 = False
                 use_big_data_tab4 = False
                 markov_weight_tab4 = 0.0
                 big_data_weight_tab4 = 0.0
                 traditional_weight_tab4 = 1.0
+                use_exclusion_pool_enhanced = False
+                exclusion_pool_size_enhanced = 100
         
         # 两轮生成设置
         with st.expander("🔄 两轮生成设置", expanded=False):
@@ -1470,6 +1518,53 @@ with tab_predict:
             else:
                 st.info("🎯 传统模式")
                 st.caption("第二轮基于第一轮特征生成新号码")
+            
+            # 排除池设置
+            st.subheader("排除池策略")
+            
+            # 初始化排除池模式状态（如果不存在）
+            if 'exclusion_pool_mode' not in st.session_state:
+                st.session_state.exclusion_pool_mode = False
+            
+            use_exclusion_pool_two_round = st.checkbox(
+                "🎯 启用排除池策略", 
+                value=st.session_state.exclusion_pool_mode,
+                help="启用后，两轮生成都将使用排除池策略，避免生成常见组合",
+                key="use_exclusion_pool_two_round_sidebar"
+            )
+            
+            # 同步状态
+            st.session_state.exclusion_pool_mode = use_exclusion_pool_two_round
+            
+            if use_exclusion_pool_two_round:
+                exclusion_pool_size_two_round = st.slider(
+                    "排除池大小", 
+                    min_value=50, max_value=500, value=100, step=10,
+                    help="排除池越大，生成的号码越独特，但生成难度也越高",
+                    key="exclusion_pool_size_two_round_sidebar"
+                )
+                
+                # 动态/静态排除池选择
+                use_dynamic_pool_two_round = st.radio(
+                    "排除池类型",
+                    options=[True, False],
+                    format_func=lambda x: "🔄 动态排除池（推荐）" if x else "📋 静态排除池",
+                    index=0,  # 默认选择动态排除池
+                    help="动态排除池：每期用当前算法生成排除池，避开算法热门倾向；静态排除池：使用固定的排除池",
+                    key="use_dynamic_pool_two_round"
+                )
+                
+                if use_dynamic_pool_two_round:
+                    st.success(f"🔄 动态排除池策略已启用（大小：{exclusion_pool_size_two_round}）")
+                    st.caption("第一轮和第二轮都将使用动态排除池策略生成")
+                else:
+                    st.info(f"📋 静态排除池策略已启用（大小：{exclusion_pool_size_two_round}）")
+                    st.caption("第一轮和第二轮都将使用静态排除池策略生成")
+            else:
+                exclusion_pool_size_two_round = 100  # 默认值
+                use_dynamic_pool_two_round = True  # 默认值
+                st.info("🔢 传统生成")
+                st.caption("使用传统的增强生成方法")
         
         # 策略管理
         with st.expander("💾 策略管理", expanded=False):
@@ -1660,6 +1755,45 @@ with tab_predict:
             type="secondary"
         )
     
+    # 排除池生成按钮区域
+    st.markdown("---")
+    st.subheader("🎯 排除池生成策略")
+    st.caption("通过排除已生成的号码组合来提高高等奖中奖率")
+    
+    exclusion_cols = st.columns([2, 2, 2, 2])
+    
+    with exclusion_cols[0]:
+        exclusion_pool_size = st.number_input(
+            "排除池大小(N)", 
+            min_value=10, max_value=1000, value=100, step=10,
+            help="先生成N组号码作为排除池",
+            key="exclusion_pool_size"
+        )
+    
+    with exclusion_cols[1]:
+        exclusion_target_count = st.number_input(
+            "目标生成数量(Y)", 
+            min_value=1, max_value=50, value=10, step=1,
+            help="生成Y组不与排除池重复的号码",
+            key="exclusion_target_count"
+        )
+    
+    with exclusion_cols[2]:
+        exclusion_generate_button = st.button(
+            "🎯 排除池生成", 
+            key="exclusion_generate_btn",
+            use_container_width=True,
+            type="primary"
+        )
+    
+    with exclusion_cols[3]:
+        exclusion_analysis_button = st.button(
+            "📊 AI效果分析", 
+            key="exclusion_analysis_btn",
+            use_container_width=True,
+            type="secondary"
+        )
+    
     if generate_button:
         # 检查是否有选中的策略
         if st.session_state.selected_strategy:
@@ -1728,22 +1862,65 @@ with tab_predict:
                 # 生成当期预测号码
                 if use_enhanced_tab4:
                     try:
-                        period_cands = enhanced_generator.generate_enhanced_numbers(
-                            count=pred_count,
-                            rules=rules_future,
-                            front_blocks=generation_context["front_blocks"],
-                            back_blocks=generation_context["back_blocks"],
-                            front_weights=generation_context["front_weights"],
-                            back_weights=generation_context["back_weights"],
-                            selected_front_blocks=pred_selected_front,
-                            selected_back_blocks=pred_selected_back,
-                            historical_data=recent_window,
-                            use_markov=use_markov_tab4,
-                            use_big_data=use_big_data_tab4,
-                            markov_weight=markov_weight_tab4,
-                            big_data_weight=big_data_weight_tab4,
-                            traditional_weight=traditional_weight_tab4
-                        )
+                        if use_exclusion_pool_enhanced:
+                            # 使用排除池策略生成
+                            exclusion_result = exclusion_pool_generator.generate_with_exclusion_pool(
+                                exclusion_pool_size=exclusion_pool_size_enhanced,
+                                target_count=pred_count,
+                                rules=rules_future,
+                                front_blocks=generation_context["front_blocks"],
+                                back_blocks=generation_context["back_blocks"],
+                                front_weights=generation_context["front_weights"],
+                                back_weights=generation_context["back_weights"],
+                                selected_front_blocks=pred_selected_front,
+                                selected_back_blocks=pred_selected_back,
+                                historical_data=recent_window,
+                                use_enhanced=True,
+                                save_to_db=True,
+                                predicted_issue=f"期{period_idx + 1}",
+                                strategy_name=st.session_state.get('selected_strategy', None),
+                                generation_method="multi_period_exclusion",
+                                use_dynamic_pool=use_dynamic_pool_enhanced
+                            )
+                            
+                            if 'error' in exclusion_result:
+                                st.warning(f"第{period_idx + 1}期排除池生成失败，回退到传统增强生成: {exclusion_result['error']}")
+                                period_cands = enhanced_generator.generate_enhanced_numbers(
+                                    count=pred_count,
+                                    rules=rules_future,
+                                    front_blocks=generation_context["front_blocks"],
+                                    back_blocks=generation_context["back_blocks"],
+                                    front_weights=generation_context["front_weights"],
+                                    back_weights=generation_context["back_weights"],
+                                    selected_front_blocks=pred_selected_front,
+                                    selected_back_blocks=pred_selected_back,
+                                    historical_data=recent_window,
+                                    use_markov=use_markov_tab4,
+                                    use_big_data=use_big_data_tab4,
+                                    markov_weight=markov_weight_tab4,
+                                    big_data_weight=big_data_weight_tab4,
+                                    traditional_weight=traditional_weight_tab4
+                                )
+                            else:
+                                period_cands = exclusion_result.get('target_numbers', [])
+                        else:
+                            # 使用传统增强生成
+                            period_cands = enhanced_generator.generate_enhanced_numbers(
+                                count=pred_count,
+                                rules=rules_future,
+                                front_blocks=generation_context["front_blocks"],
+                                back_blocks=generation_context["back_blocks"],
+                                front_weights=generation_context["front_weights"],
+                                back_weights=generation_context["back_weights"],
+                                selected_front_blocks=pred_selected_front,
+                                selected_back_blocks=pred_selected_back,
+                                historical_data=recent_window,
+                                use_markov=use_markov_tab4,
+                                use_big_data=use_big_data_tab4,
+                                markov_weight=markov_weight_tab4,
+                                big_data_weight=big_data_weight_tab4,
+                                traditional_weight=traditional_weight_tab4
+                            )
                     except Exception as e:
                         st.warning(f"增强生成失败，回退到传统方法: {e}")
                         period_cands = genmod.gen_numbers(
@@ -1795,22 +1972,68 @@ with tab_predict:
 
             if use_enhanced_tab4:
                 try:
-                    cands = enhanced_generator.generate_enhanced_numbers(
-                        count=pred_count,
-                        rules=rules_future,
-                        front_blocks=generation_context["front_blocks"],
-                        back_blocks=generation_context["back_blocks"],
-                        front_weights=generation_context["front_weights"],
-                        back_weights=generation_context["back_weights"],
-                        selected_front_blocks=pred_selected_front,
-                        selected_back_blocks=pred_selected_back,
-                        historical_data=recent_window,
-                        use_markov=use_markov_tab4,
-                        use_big_data=use_big_data_tab4,
-                        markov_weight=markov_weight_tab4,
-                        big_data_weight=big_data_weight_tab4,
-                        traditional_weight=traditional_weight_tab4
-                    )
+                    if use_exclusion_pool_enhanced:
+                        # 使用排除池策略生成
+                        exclusion_result = exclusion_pool_generator.generate_with_exclusion_pool(
+                            exclusion_pool_size=exclusion_pool_size_enhanced,
+                            target_count=pred_count,
+                            rules=rules_future,
+                            front_blocks=generation_context["front_blocks"],
+                            back_blocks=generation_context["back_blocks"],
+                            front_weights=generation_context["front_weights"],
+                            back_weights=generation_context["back_weights"],
+                            selected_front_blocks=pred_selected_front,
+                            selected_back_blocks=pred_selected_back,
+                            historical_data=recent_window,
+                            use_enhanced=True,
+                            save_to_db=True,
+                            predicted_issue=None,  # 可以从用户输入获取
+                            strategy_name=st.session_state.get('selected_strategy', None),
+                            generation_method="single_period_exclusion",
+                            use_dynamic_pool=use_dynamic_pool_enhanced
+                        )
+                        
+                        if 'error' in exclusion_result:
+                            st.warning(f"排除池生成失败，回退到传统增强生成: {exclusion_result['error']}")
+                            cands = enhanced_generator.generate_enhanced_numbers(
+                                count=pred_count,
+                                rules=rules_future,
+                                front_blocks=generation_context["front_blocks"],
+                                back_blocks=generation_context["back_blocks"],
+                                front_weights=generation_context["front_weights"],
+                                back_weights=generation_context["back_weights"],
+                                selected_front_blocks=pred_selected_front,
+                                selected_back_blocks=pred_selected_back,
+                                historical_data=recent_window,
+                                use_markov=use_markov_tab4,
+                                use_big_data=use_big_data_tab4,
+                                markov_weight=markov_weight_tab4,
+                                big_data_weight=big_data_weight_tab4,
+                                traditional_weight=traditional_weight_tab4
+                            )
+                        else:
+                            cands = exclusion_result.get('target_numbers', [])
+                            # 显示排除池信息
+                            if exclusion_result.get('db_record_id'):
+                                st.success(f"✅ 使用排除池策略生成完成，数据已保存（记录ID: {exclusion_result['db_record_id']}）")
+                    else:
+                        # 使用传统增强生成
+                        cands = enhanced_generator.generate_enhanced_numbers(
+                            count=pred_count,
+                            rules=rules_future,
+                            front_blocks=generation_context["front_blocks"],
+                            back_blocks=generation_context["back_blocks"],
+                            front_weights=generation_context["front_weights"],
+                            back_weights=generation_context["back_weights"],
+                            selected_front_blocks=pred_selected_front,
+                            selected_back_blocks=pred_selected_back,
+                            historical_data=recent_window,
+                            use_markov=use_markov_tab4,
+                            use_big_data=use_big_data_tab4,
+                            markov_weight=markov_weight_tab4,
+                            big_data_weight=big_data_weight_tab4,
+                            traditional_weight=traditional_weight_tab4
+                        )
                 except Exception as e:
                     st.warning(f"增强生成失败，回退到传统方法: {e}")
                     cands = genmod.gen_numbers(
@@ -1944,9 +2167,16 @@ with tab_predict:
             # 获取侧边栏的两轮生成设置
             variation_strength = st.session_state.get('variation_strength_sidebar', 0.3)
             use_recombination = st.session_state.get('recombination_mode', False)
+            use_exclusion_pool_two_round = st.session_state.get('exclusion_pool_mode', False)
+            exclusion_pool_size_two_round = st.session_state.get('exclusion_pool_size_two_round_sidebar', 100)
+            use_dynamic_pool_two_round = st.session_state.get('use_dynamic_pool_two_round', True)
             
             # 显示当前设置
-            st.info(f"🎯 两轮生成设置：变化强度 {variation_strength:.1f}，模式：{'🔄 重组' if use_recombination else '🎯 传统'}")
+            if use_exclusion_pool_two_round:
+                pool_type = "动态" if use_dynamic_pool_two_round else "静态"
+                st.info(f"🎯 两轮生成设置：变化强度 {variation_strength:.1f}，模式：{'🔄 重组' if use_recombination else '🎯 传统'}，{pool_type}排除池：{exclusion_pool_size_two_round}")
+            else:
+                st.info(f"🎯 两轮生成设置：变化强度 {variation_strength:.1f}，模式：{'🔄 重组' if use_recombination else '🎯 传统'}")
             
             # 组装规则
             rules_two_round = assemble_rules(
@@ -1982,7 +2212,13 @@ with tab_predict:
                         big_data_weight=big_data_weight_tab4,
                         traditional_weight=traditional_weight_tab4,
                         variation_strength=variation_strength,
-                        use_recombination=use_recombination
+                        use_recombination=use_recombination,
+                        use_exclusion_pool=use_exclusion_pool_two_round,
+                        exclusion_pool_size=exclusion_pool_size_two_round,
+                        save_to_db=True,
+                        predicted_issue=None,  # 可以从用户输入获取
+                        strategy_name=st.session_state.get('selected_strategy', None),
+                        use_dynamic_pool=use_dynamic_pool_two_round
                     )
                 
                     if 'error' in two_round_result:
@@ -2235,6 +2471,389 @@ with tab_predict:
         else:
             # 初始化失败的情况
             cands = []
+
+    # 排除池生成逻辑
+    if exclusion_generate_button:
+        st.info(f"🎯 开始排除池生成：排除池大小={exclusion_pool_size}，目标数量={exclusion_target_count}")
+        
+        # 检查是否有选中的策略
+        if st.session_state.selected_strategy:
+            # 加载策略参数（与普通生成相同的逻辑）
+            strategy_params = load_strategy(st.session_state.selected_strategy)
+            if strategy_params:
+                st.info(f"🔧 使用策略参数进行排除池生成")
+                
+                # 从策略中获取参数
+                use_recent_n = strategy_params.get('use_recent_n', use_recent_n)
+                pred_count = strategy_params.get('pred_count', pred_count)
+                min_consec = strategy_params.get('min_consec', min_consec)
+                min_odd = strategy_params.get('min_odd', min_odd)
+                consec_mode = strategy_params.get('consec_mode', consec_mode)
+                consec_check_type = strategy_params.get('consec_check_type', consec_check_type)
+                pred_selected_front = strategy_params.get('pred_selected_front', pred_selected_front)
+                pred_selected_back = strategy_params.get('pred_selected_back', pred_selected_back)
+                
+                # 重新计算上下文
+                recent_window = build_history_window(df_filtered, recent_n=use_recent_n)
+                generation_context = prepare_generation_context(
+                    df_window=recent_window,
+                    span=span,
+                    front_blocks_labels=front_labels,
+                    back_blocks_labels=back_labels,
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back,
+                )
+                exclude_front, exclude_back = compute_exclusions(
+                    generation_context["front_freq_map"],
+                    generation_context["back_freq_map"],
+                    exclude_top_n,
+                    exclude_top_front_n,
+                    exclude_top_back_n
+                )
+        
+        # 组装规则
+        rules_exclusion = assemble_rules(
+            base_rules=predict_rules,
+            min_consec=min_consec,
+            min_odd=min_odd,
+            exclude_front=exclude_front,
+            exclude_back=exclude_back,
+            top_n_blocks=top_n_blocks_future,
+            max_per_block=max_per_block_future,
+            random_blocks_count=random_blocks_count_future,
+            random_back_blocks_count=random_back_blocks_count_future,
+            consecutive_mode=consec_mode,
+            consecutive_check_type=consec_check_type
+        )
+        
+        # 执行排除池生成
+        with st.spinner("正在进行排除池生成..."):
+            try:
+                exclusion_result = exclusion_pool_generator.generate_with_exclusion_pool(
+                    exclusion_pool_size=exclusion_pool_size,
+                    target_count=exclusion_target_count,
+                    rules=rules_exclusion,
+                    front_blocks=generation_context["front_blocks"],
+                    back_blocks=generation_context["back_blocks"],
+                    front_weights=generation_context["front_weights"],
+                    back_weights=generation_context["back_weights"],
+                    selected_front_blocks=pred_selected_front,
+                    selected_back_blocks=pred_selected_back,
+                    historical_data=recent_window,
+                    use_enhanced=use_enhanced_tab4,
+                    max_attempts=10000
+                )
+                
+                if 'error' in exclusion_result:
+                    st.error(f"排除池生成失败: {exclusion_result['error']}")
+                    cands = []
+                else:
+                    st.success("🎯 排除池生成完成！")
+                    
+                    # 设置cands为目标号码，以便后续显示逻辑正常工作
+                    cands = exclusion_result.get('target_numbers', [])
+                    
+                    # 显示排除池生成结果
+                    exclusion_tabs = st.tabs(["🎯 目标号码", "🚫 排除池", "📊 生成统计"])
+                    
+                    # 目标号码
+                    with exclusion_tabs[0]:
+                        st.subheader("目标号码（不与排除池重复）")
+                        target_numbers = exclusion_result['target_numbers']
+                        
+                        if target_numbers:
+                            target_df = pd.DataFrame([
+                                {
+                                    "序号": i+1,
+                                    "前区": ",".join(map(str, c["front"])),
+                                    "后区": ",".join(map(str, c["back"])),
+                                    "生成方法": c.get('generation_method', 'exclusion_pool'),
+                                    "置信度": f"{c.get('markov_confidence', 0):.3f}" if 'markov_confidence' in c else f"{c.get('ensemble_confidence', 0):.3f}"
+                                }
+                                for i, c in enumerate(target_numbers)
+                            ])
+                            
+                            st.dataframe(target_df, use_container_width=True, hide_index=True)
+                            
+                            st.info(f"✅ 成功生成 {len(target_numbers)} 组目标号码，均不与排除池中的 {exclusion_result['exclusion_pool_size']} 组号码重复")
+                        else:
+                            st.warning("未能生成目标号码，请尝试减少排除池大小或增加最大尝试次数")
+                    
+                    # 排除池
+                    with exclusion_tabs[1]:
+                        st.subheader("排除池号码")
+                        exclusion_pool = exclusion_result['exclusion_pool']
+                        
+                        if exclusion_pool:
+                            # 只显示前20组排除池号码（避免页面过长）
+                            display_count = min(20, len(exclusion_pool))
+                            exclusion_df = pd.DataFrame([
+                                {
+                                    "序号": i+1,
+                                    "前区": ",".join(map(str, c["front"])),
+                                    "后区": ",".join(map(str, c["back"])),
+                                    "生成方法": c.get('generation_method', 'traditional')
+                                }
+                                for i, c in enumerate(exclusion_pool[:display_count])
+                            ])
+                            
+                            st.dataframe(exclusion_df, use_container_width=True, hide_index=True)
+                            
+                            if len(exclusion_pool) > display_count:
+                                st.caption(f"显示前 {display_count} 组，共 {len(exclusion_pool)} 组排除池号码")
+                        else:
+                            st.warning("排除池为空")
+                    
+                    # 生成统计
+                    with exclusion_tabs[2]:
+                        st.subheader("生成统计")
+                        
+                        stats_cols = st.columns(4)
+                        with stats_cols[0]:
+                            st.metric("排除池大小", exclusion_result['exclusion_pool_size'])
+                        with stats_cols[1]:
+                            st.metric("目标生成数", exclusion_result['target_count_actual'])
+                        with stats_cols[2]:
+                            st.metric("生成尝试次数", exclusion_result['generation_attempts'])
+                        with stats_cols[3]:
+                            success_rate = exclusion_result['target_count_actual'] / exclusion_target_count if exclusion_target_count > 0 else 0
+                            st.metric("生成成功率", f"{success_rate:.2%}")
+                        
+                        # 显示生成记录
+                        generation_record = exclusion_result.get('generation_record', {})
+                        if generation_record:
+                            st.json(generation_record)
+                        
+                        # 使用说明
+                        with st.expander("💡 排除池生成原理"):
+                            st.markdown("""
+                            **排除池生成策略的工作原理：**
+                            
+                            1. **第一步**：生成N组号码作为"排除池"
+                            2. **第二步**：生成Y组号码，确保每组都不与排除池中的任何一组完全相同
+                            3. **理论基础**：通过排除常见的号码组合，增加生成罕见组合的概率
+                            
+                            **潜在优势：**
+                            - 避免生成过于常见的号码组合
+                            - 增加生成独特组合的机会
+                            - 可能提高高等奖中奖概率
+                            
+                            **注意事项：**
+                            - 排除池越大，生成难度越高
+                            - 需要通过历史回测验证实际效果
+                            - 建议结合AI分析找到最优参数
+                            """)
+            
+            except Exception as e:
+                st.error(f"排除池生成过程中出现错误: {e}")
+                cands = []
+                import traceback
+                with st.expander("错误详情"):
+                    st.code(traceback.format_exc())
+
+    # AI效果分析逻辑
+    if exclusion_analysis_button:
+        st.info("🤖 开始AI效果分析...")
+        
+        # 分析参数设置
+        analysis_cols = st.columns(3)
+        with analysis_cols[0]:
+            test_pool_sizes = st.multiselect(
+                "测试排除池大小",
+                options=[10, 20, 50, 100, 200, 300, 500],
+                default=[50, 100, 200],
+                key="test_pool_sizes"
+            )
+        
+        with analysis_cols[1]:
+            analysis_periods = st.number_input(
+                "测试期数", 
+                min_value=10, max_value=100, value=30,
+                key="analysis_periods"
+            )
+        
+        with analysis_cols[2]:
+            analysis_target_count = st.number_input(
+                "每期生成数量", 
+                min_value=1, max_value=20, value=5,
+                key="analysis_target_count"
+            )
+        
+        if st.button("开始AI分析", key="start_ai_analysis"):
+            if not test_pool_sizes:
+                st.error("请选择至少一个排除池大小进行测试")
+            else:
+                # 准备分析参数
+                rules_analysis = assemble_rules(
+                    base_rules=predict_rules,
+                    min_consec=min_consec,
+                    min_odd=min_odd,
+                    exclude_front=exclude_front,
+                    exclude_back=exclude_back,
+                    top_n_blocks=top_n_blocks_future,
+                    max_per_block=max_per_block_future,
+                    random_blocks_count=random_blocks_count_future,
+                    random_back_blocks_count=random_back_blocks_count_future,
+                    consecutive_mode=consec_mode,
+                    consecutive_check_type=consec_check_type
+                )
+                
+                # 奖金结构
+                prize_structure_analysis = {
+                    "一等奖": 5000000.0,
+                    "二等奖": 1500000.0,
+                    "三等奖": 10000.0,
+                    "四等奖": 3000.0,
+                    "五等奖": 300.0,
+                    "六等奖": 200.0,
+                    "七等奖": 100.0,
+                    "八等奖": 15.0,
+                    "九等奖": 5.0
+                }
+                
+                with st.spinner(f"正在分析 {len(test_pool_sizes)} 种排除池大小的效果..."):
+                    try:
+                        analysis_results = exclusion_pool_generator.analyze_exclusion_effectiveness(
+                            historical_data=df_filtered,
+                            exclusion_pool_sizes=test_pool_sizes,
+                            target_count=analysis_target_count,
+                            test_periods=analysis_periods,
+                            rules=rules_analysis,
+                            generation_context=generation_context,
+                            selected_front_blocks=pred_selected_front,
+                            selected_back_blocks=pred_selected_back,
+                            prize_structure=prize_structure_analysis
+                        )
+                        
+                        st.success("🎉 AI分析完成！")
+                        
+                        # 显示分析结果
+                        analysis_result_tabs = st.tabs(["📊 综合对比", "🏆 最优推荐", "📈 详细数据", "💾 保存结果"])
+                        
+                        # 综合对比
+                        with analysis_result_tabs[0]:
+                            st.subheader("不同排除池大小效果对比")
+                            
+                            if analysis_results.get("results"):
+                                # 创建对比表格
+                                comparison_data = []
+                                for result in analysis_results["results"]:
+                                    comparison_data.append({
+                                        "排除池大小": result["exclusion_pool_size"],
+                                        "生成成功率": f"{result.get('generation_success_rate', 0):.2%}",
+                                        "高等奖命中率": f"{result.get('high_prize_rate', 0):.4%}",
+                                        "总体命中率": f"{result.get('hit_rate', 0):.2%}",
+                                        "ROI": f"{result.get('roi', 0):.2%}",
+                                        "高等奖命中次数": result.get('high_prize_hits', 0),
+                                        "净收益": f"{result.get('net_profit', 0):.2f}元"
+                                    })
+                                
+                                comparison_df = pd.DataFrame(comparison_data)
+                                st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+                                
+                                # 可视化对比
+                                import plotly.graph_objects as go
+                                from plotly.subplots import make_subplots
+                                
+                                fig = make_subplots(
+                                    rows=2, cols=2,
+                                    subplot_titles=('高等奖命中率', 'ROI', '总体命中率', '生成成功率'),
+                                    specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                                           [{"secondary_y": False}, {"secondary_y": False}]]
+                                )
+                                
+                                pool_sizes = [r["exclusion_pool_size"] for r in analysis_results["results"]]
+                                high_prize_rates = [r.get("high_prize_rate", 0) * 100 for r in analysis_results["results"]]
+                                rois = [r.get("roi", 0) * 100 for r in analysis_results["results"]]
+                                hit_rates = [r.get("hit_rate", 0) * 100 for r in analysis_results["results"]]
+                                success_rates = [r.get("generation_success_rate", 0) * 100 for r in analysis_results["results"]]
+                                
+                                fig.add_trace(go.Scatter(x=pool_sizes, y=high_prize_rates, mode='lines+markers', name='高等奖命中率'), row=1, col=1)
+                                fig.add_trace(go.Scatter(x=pool_sizes, y=rois, mode='lines+markers', name='ROI'), row=1, col=2)
+                                fig.add_trace(go.Scatter(x=pool_sizes, y=hit_rates, mode='lines+markers', name='总体命中率'), row=2, col=1)
+                                fig.add_trace(go.Scatter(x=pool_sizes, y=success_rates, mode='lines+markers', name='生成成功率'), row=2, col=2)
+                                
+                                fig.update_layout(height=600, showlegend=False, title_text="排除池大小效果分析")
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.warning("没有分析结果数据")
+                        
+                        # 最优推荐
+                        with analysis_result_tabs[1]:
+                            st.subheader("AI推荐最优排除池大小")
+                            
+                            recommendations = exclusion_pool_generator.get_optimal_exclusion_pool_size(analysis_results)
+                            
+                            if 'error' not in recommendations:
+                                rec_cols = st.columns(2)
+                                
+                                with rec_cols[0]:
+                                    st.markdown("### 🏆 综合最优")
+                                    best_overall = recommendations.get("best_overall")
+                                    if best_overall:
+                                        st.success(f"**推荐排除池大小: {best_overall['exclusion_pool_size']}**")
+                                        st.write(f"- 高等奖命中率: {best_overall.get('high_prize_rate', 0):.4%}")
+                                        st.write(f"- ROI: {best_overall.get('roi', 0):.2%}")
+                                        st.write(f"- 生成成功率: {best_overall.get('generation_success_rate', 0):.2%}")
+                                        st.write(f"- 综合评分: {best_overall.get('composite_score', 0):.2f}")
+                                
+                                with rec_cols[1]:
+                                    st.markdown("### 🎯 高等奖最优")
+                                    best_high_prize = recommendations.get("best_for_high_prize")
+                                    if best_high_prize:
+                                        st.info(f"**排除池大小: {best_high_prize['exclusion_pool_size']}**")
+                                        st.write(f"- 高等奖命中率: {best_high_prize.get('high_prize_rate', 0):.4%}")
+                                        st.write(f"- 高等奖命中次数: {best_high_prize.get('high_prize_hits', 0)}")
+                                        st.write(f"- ROI: {best_high_prize.get('roi', 0):.2%}")
+                                
+                                # 分析总结
+                                summary = recommendations.get("analysis_summary", {})
+                                if summary:
+                                    st.markdown("### 📋 分析总结")
+                                    summary_cols = st.columns(3)
+                                    with summary_cols[0]:
+                                        st.metric("测试方案数", summary.get("total_tested", 0))
+                                    with summary_cols[1]:
+                                        st.metric("最佳高等奖命中率", f"{summary.get('best_high_prize_rate', 0):.4%}")
+                                    with summary_cols[2]:
+                                        st.metric("最佳ROI", f"{summary.get('best_roi', 0):.2%}")
+                            else:
+                                st.error(f"推荐分析失败: {recommendations['error']}")
+                        
+                        # 详细数据
+                        with analysis_result_tabs[2]:
+                            st.subheader("详细分析数据")
+                            
+                            if analysis_results.get("results"):
+                                for result in analysis_results["results"]:
+                                    with st.expander(f"排除池大小 {result['exclusion_pool_size']} 详细数据"):
+                                        st.json(result)
+                        
+                        # 保存结果
+                        with analysis_result_tabs[3]:
+                            st.subheader("保存分析结果")
+                            
+                            save_filename = st.text_input(
+                                "文件名", 
+                                value=f"exclusion_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                key="save_analysis_filename"
+                            )
+                            
+                            if st.button("保存到文件", key="save_analysis_btn"):
+                                if exclusion_pool_generator.save_analysis_results(save_filename):
+                                    st.success(f"✅ 分析结果已保存到 {save_filename}")
+                                else:
+                                    st.error("❌ 保存失败")
+                            
+                            # 显示保存的数据预览
+                            with st.expander("查看要保存的数据"):
+                                st.json(analysis_results)
+                    
+                    except Exception as e:
+                        st.error(f"AI分析过程中出现错误: {e}")
+                        import traceback
+                        with st.expander("错误详情"):
+                            st.code(traceback.format_exc())
 
     # 使用Tabs布局显示未来预测和历史回测
     if (generate_button and len(cands) > 0) or backtest_n > 0:
@@ -2578,7 +3197,7 @@ with tab_ai:
         "九等奖": 5.0
     }
     
-    ai_tabs = st.tabs(["🧠 模型训练", "🔍 参数优化", "📊 批量回测", "⚡ 性能测试"])
+    ai_tabs = st.tabs(["🧠 模型训练", "🔍 参数优化", "📊 批量回测", "⚡ 性能测试", "🎯 排除池数据分析"])
     
     with ai_tabs[0]:
         st.subheader("机器学习模型训练")
@@ -3223,6 +3842,343 @@ with tab_ai:
                 import traceback
                 with st.expander("查看详细错误"):
                     st.code(traceback.format_exc())
+
+    with ai_tabs[4]:
+        st.subheader("🎯 排除池数据分析")
+        st.write("分析排除池生成的历史数据，优化参数设置，提升中奖率")
+        
+        # 数据库统计信息
+        st.markdown("### 📊 数据库统计")
+        try:
+            stats = exclusion_pool_db.get_statistics()
+            if stats:
+                stats_cols = st.columns(4)
+                with stats_cols[0]:
+                    st.metric("总记录数", stats.get('total_records', 0))
+                with stats_cols[1]:
+                    st.metric("已验证记录", stats.get('verified_records', 0))
+                with stats_cols[2]:
+                    st.metric("验证率", f"{stats.get('verification_rate', 0):.2%}")
+                with stats_cols[3]:
+                    st.metric("高等奖记录", stats.get('high_prize_records', 0))
+            else:
+                st.info("暂无数据库统计信息")
+        except Exception as e:
+            st.error(f"获取统计信息失败: {e}")
+        
+        # 数据分析标签页
+        analysis_tabs = st.tabs(["📈 生成记录分析", "🏆 中奖效果分析", "🔍 参数优化建议", "📋 历史记录查看"])
+        
+        # 生成记录分析
+        with analysis_tabs[0]:
+            st.subheader("生成记录分析")
+            
+            # 获取生成记录
+            try:
+                records = exclusion_pool_db.get_generation_results(limit=100)
+                if records:
+                    # 转换为DataFrame进行分析
+                    df_records = pd.DataFrame(records)
+                    
+                    # 基本统计
+                    st.markdown("#### 基本统计")
+                    basic_cols = st.columns(4)
+                    with basic_cols[0]:
+                        st.metric("平均生成成功率", f"{df_records['success_rate'].mean():.2%}")
+                    with basic_cols[1]:
+                        st.metric("平均尝试次数", f"{df_records['generation_attempts'].mean():.0f}")
+                    with basic_cols[2]:
+                        st.metric("最常用排除池大小", df_records['exclusion_pool_size'].mode().iloc[0] if not df_records['exclusion_pool_size'].mode().empty else "N/A")
+                    with basic_cols[3]:
+                        st.metric("最常用目标数量", df_records['target_count'].mode().iloc[0] if not df_records['target_count'].mode().empty else "N/A")
+                    
+                    # 生成方法分布
+                    st.markdown("#### 生成方法分布")
+                    method_counts = df_records['generation_method'].value_counts()
+                    fig_methods = px.pie(
+                        values=method_counts.values,
+                        names=method_counts.index,
+                        title="生成方法使用分布"
+                    )
+                    st.plotly_chart(fig_methods, use_container_width=True)
+                    
+                    # 成功率vs排除池大小
+                    st.markdown("#### 成功率 vs 排除池大小")
+                    fig_success = px.scatter(
+                        df_records,
+                        x='exclusion_pool_size',
+                        y='success_rate',
+                        color='generation_method',
+                        size='target_count',
+                        title="生成成功率与排除池大小的关系",
+                        labels={'success_rate': '生成成功率', 'exclusion_pool_size': '排除池大小'}
+                    )
+                    st.plotly_chart(fig_success, use_container_width=True)
+                    
+                    # 时间趋势分析
+                    st.markdown("#### 时间趋势分析")
+                    df_records['prediction_date'] = pd.to_datetime(df_records['prediction_date'])
+                    df_records_sorted = df_records.sort_values('prediction_date')
+                    
+                    fig_trend = px.line(
+                        df_records_sorted,
+                        x='prediction_date',
+                        y='success_rate',
+                        color='generation_method',
+                        title="生成成功率时间趋势",
+                        labels={'success_rate': '生成成功率', 'prediction_date': '预测日期'}
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                    
+                else:
+                    st.info("暂无生成记录数据")
+            except Exception as e:
+                st.error(f"分析生成记录失败: {e}")
+        
+        # 中奖效果分析
+        with analysis_tabs[1]:
+            st.subheader("中奖效果分析")
+            
+            try:
+                # 获取已验证的记录
+                verified_records = exclusion_pool_db.get_generation_results(verified_only=True, limit=100)
+                if verified_records:
+                    df_verified = pd.DataFrame(verified_records)
+                    
+                    # 中奖统计
+                    st.markdown("#### 中奖统计")
+                    prize_cols = st.columns(4)
+                    with prize_cols[0]:
+                        total_hits = df_verified['hit_count'].sum()
+                        st.metric("总中奖注数", total_hits)
+                    with prize_cols[1]:
+                        high_prize_hits = df_verified['high_prize_hits'].sum()
+                        st.metric("高等奖中奖注数", high_prize_hits)
+                    with prize_cols[2]:
+                        total_investment = df_verified['investment_cost'].sum()
+                        st.metric("总投入", f"¥{total_investment:.2f}")
+                    with prize_cols[3]:
+                        total_return = df_verified['total_prize_amount'].sum()
+                        st.metric("总回收", f"¥{total_return:.2f}")
+                    
+                    # ROI分析
+                    st.markdown("#### ROI分析")
+                    df_verified['roi_percent'] = df_verified['roi'] * 100
+                    
+                    # ROI分布直方图
+                    fig_roi = px.histogram(
+                        df_verified,
+                        x='roi_percent',
+                        nbins=20,
+                        title="ROI分布直方图",
+                        labels={'roi_percent': 'ROI (%)', 'count': '记录数'}
+                    )
+                    st.plotly_chart(fig_roi, use_container_width=True)
+                    
+                    # 排除池大小vs中奖率
+                    st.markdown("#### 排除池大小 vs 中奖效果")
+                    
+                    # 按排除池大小分组分析
+                    pool_size_analysis = df_verified.groupby('exclusion_pool_size').agg({
+                        'hit_count': 'sum',
+                        'high_prize_hits': 'sum',
+                        'total_prize_amount': 'sum',
+                        'investment_cost': 'sum',
+                        'roi': 'mean'
+                    }).reset_index()
+                    
+                    pool_size_analysis['hit_rate'] = pool_size_analysis['hit_count'] / pool_size_analysis['investment_cost'] * 2  # 假设每注2元
+                    pool_size_analysis['high_prize_rate'] = pool_size_analysis['high_prize_hits'] / pool_size_analysis['investment_cost'] * 2
+                    
+                    fig_pool_effect = px.scatter(
+                        pool_size_analysis,
+                        x='exclusion_pool_size',
+                        y='roi',
+                        size='hit_count',
+                        color='high_prize_hits',
+                        title="排除池大小对ROI的影响",
+                        labels={'roi': '平均ROI', 'exclusion_pool_size': '排除池大小'}
+                    )
+                    st.plotly_chart(fig_pool_effect, use_container_width=True)
+                    
+                    # 详细数据表
+                    st.markdown("#### 详细分析数据")
+                    st.dataframe(pool_size_analysis, use_container_width=True)
+                    
+                else:
+                    st.info("暂无已验证的中奖记录")
+            except Exception as e:
+                st.error(f"分析中奖效果失败: {e}")
+        
+        # 参数优化建议
+        with analysis_tabs[2]:
+            st.subheader("参数优化建议")
+            
+            try:
+                # 获取分析结果
+                analysis_results = exclusion_pool_db.get_analysis_results(limit=10)
+                if analysis_results:
+                    st.markdown("#### 历史分析结果")
+                    
+                    for i, result in enumerate(analysis_results[:3], 1):  # 显示最近3次分析
+                        with st.expander(f"分析 {i}: {result['analysis_name']} ({result['analysis_date'][:10]})"):
+                            st.write(f"**测试期数**: {result['test_periods']}")
+                            st.write(f"**每期生成数量**: {result['target_count']}")
+                            st.write(f"**测试的排除池大小**: {', '.join(map(str, result['test_pool_sizes']))}")
+                            
+                            if result['best_pool_size']:
+                                st.success(f"**推荐的最佳排除池大小**: {result['best_pool_size']}")
+                                st.write(f"**最佳高等奖命中率**: {result['best_high_prize_rate']:.4%}")
+                                st.write(f"**最佳ROI**: {result['best_roi']:.2%}")
+                    
+                    # 综合建议
+                    st.markdown("#### 🎯 AI综合建议")
+                    
+                    # 分析所有历史结果，给出建议
+                    best_pool_sizes = [r['best_pool_size'] for r in analysis_results if r['best_pool_size']]
+                    if best_pool_sizes:
+                        avg_best_size = sum(best_pool_sizes) / len(best_pool_sizes)
+                        most_common_size = max(set(best_pool_sizes), key=best_pool_sizes.count)
+                        
+                        st.success(f"**推荐排除池大小**: {most_common_size} (最常推荐)")
+                        st.info(f"**平均最佳大小**: {avg_best_size:.0f}")
+                        
+                        # 使用建议
+                        st.markdown("#### 💡 使用建议")
+                        st.markdown(f"""
+                        1. **初学者**: 建议使用排除池大小 {max(50, most_common_size - 50)} - {most_common_size}
+                        2. **进阶用户**: 建议使用排除池大小 {most_common_size} - {most_common_size + 50}
+                        3. **专业用户**: 可以测试 {most_common_size + 50} - {most_common_size + 100} 的范围
+                        
+                        **注意**: 排除池越大，生成难度越高，但可能获得更独特的号码组合。
+                        """)
+                    else:
+                        st.warning("暂无足够的分析数据提供建议，请先进行AI效果分析")
+                else:
+                    st.info("暂无分析结果，请先在'未来号码预测'页面进行AI效果分析")
+            except Exception as e:
+                st.error(f"获取优化建议失败: {e}")
+        
+        # 历史记录查看
+        with analysis_tabs[3]:
+            st.subheader("历史记录查看")
+            
+            # 筛选选项
+            filter_cols = st.columns(3)
+            with filter_cols[0]:
+                method_filter = st.selectbox(
+                    "生成方法",
+                    options=["全部", "single_period_exclusion", "multi_period_exclusion", "two_round_exclusion_first", "two_round_exclusion_second"],
+                    key="method_filter"
+                )
+            with filter_cols[1]:
+                verified_filter = st.selectbox(
+                    "验证状态",
+                    options=["全部", "已验证", "未验证"],
+                    key="verified_filter"
+                )
+            with filter_cols[2]:
+                limit_records = st.number_input(
+                    "显示记录数",
+                    min_value=10, max_value=500, value=50,
+                    key="limit_records"
+                )
+            
+            try:
+                # 获取记录
+                method = None if method_filter == "全部" else method_filter
+                verified_only = verified_filter == "已验证"
+                
+                records = exclusion_pool_db.get_generation_results(
+                    limit=limit_records,
+                    method=method,
+                    verified_only=verified_only
+                )
+                
+                if records:
+                    # 转换为显示格式
+                    display_records = []
+                    for record in records:
+                        display_records.append({
+                            "ID": record['id'],
+                            "生成方法": record['generation_method'],
+                            "排除池大小": record['exclusion_pool_size'],
+                            "目标数量": record['target_count'],
+                            "实际生成": record['actual_generated'],
+                            "成功率": f"{record['success_rate']:.2%}",
+                            "预测日期": record['prediction_date'][:10] if record['prediction_date'] else "N/A",
+                            "验证状态": "已验证" if record['verification_date'] else "未验证",
+                            "中奖注数": record['hit_count'] or 0,
+                            "高等奖": record['high_prize_hits'] or 0,
+                            "ROI": f"{record['roi']:.2%}" if record['roi'] is not None else "N/A"
+                        })
+                    
+                    df_display = pd.DataFrame(display_records)
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    
+                    # 详细记录查看
+                    if st.checkbox("显示详细记录"):
+                        selected_id = st.selectbox(
+                            "选择记录ID查看详情",
+                            options=[r['id'] for r in records],
+                            key="selected_record_id"
+                        )
+                        
+                        if selected_id:
+                            selected_record = next(r for r in records if r['id'] == selected_id)
+                            
+                            st.markdown("#### 详细信息")
+                            detail_cols = st.columns(2)
+                            
+                            with detail_cols[0]:
+                                st.json({
+                                    "基本信息": {
+                                        "ID": selected_record['id'],
+                                        "生成方法": selected_record['generation_method'],
+                                        "排除池大小": selected_record['exclusion_pool_size'],
+                                        "目标数量": selected_record['target_count'],
+                                        "实际生成": selected_record['actual_generated'],
+                                        "生成尝试次数": selected_record['generation_attempts'],
+                                        "成功率": f"{selected_record['success_rate']:.2%}",
+                                        "预测日期": selected_record['prediction_date']
+                                    }
+                                })
+                            
+                            with detail_cols[1]:
+                                if selected_record['verification_date']:
+                                    st.json({
+                                        "中奖信息": {
+                                            "验证日期": selected_record['verification_date'],
+                                            "实际开奖前区": selected_record['actual_winning_front'],
+                                            "实际开奖后区": selected_record['actual_winning_back'],
+                                            "中奖注数": selected_record['hit_count'],
+                                            "高等奖中奖": selected_record['high_prize_hits'],
+                                            "总奖金": f"¥{selected_record['total_prize_amount']:.2f}",
+                                            "投注成本": f"¥{selected_record['investment_cost']:.2f}",
+                                            "ROI": f"{selected_record['roi']:.2%}" if selected_record['roi'] is not None else "N/A"
+                                        }
+                                    })
+                                else:
+                                    st.info("该记录尚未验证中奖情况")
+                            
+                            # 显示生成的号码
+                            if selected_record['target_numbers_data']:
+                                st.markdown("#### 生成的目标号码")
+                                target_numbers = selected_record['target_numbers_data']
+                                target_df = pd.DataFrame([
+                                    {
+                                        "序号": i+1,
+                                        "前区": ",".join(map(str, num['front'])),
+                                        "后区": ",".join(map(str, num['back'])),
+                                        "生成方法": num.get('method', 'unknown')
+                                    }
+                                    for i, num in enumerate(target_numbers)
+                                ])
+                                st.dataframe(target_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("没有找到符合条件的记录")
+            except Exception as e:
+                st.error(f"查看历史记录失败: {e}")
 
 # 显示系统优化信息
 st.sidebar.markdown("---")
