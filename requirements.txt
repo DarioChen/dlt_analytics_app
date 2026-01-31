@@ -1,12 +1,60 @@
-numpy
-streamlit>=1.45
-pandas>=2.0
-requests>=2.0
-SQLAlchemy>=2.0
-plotly>=5.15
-matplotlib
-beautifulsoup4>=4.12
+# requirements.txt - 大乐透分析系统 v3.0 进化版
+
+# 基础依赖
+numpy>=1.21.0
+streamlit>=1.28.0
+pandas>=1.5.0
+requests>=2.28.0
+SQLAlchemy>=1.4.0
+plotly>=5.0.0
+matplotlib>=3.5.0
+beautifulsoup4>=4.12.0
+python-dateutil>=2.8.0
+
+# 数据分析和可视化
+seaborn>=0.11.0
+scipy>=1.9.0
+
+# 机器学习基础（必需）
+scikit-learn>=1.1.0
 lightgbm>=4.0.0
 xgboost>=2.0.0
-scikit-learn>=1.3.0
 
+# 深度学习（可选，用于神经网络功能）
+# torch>=1.12.0
+# torchvision>=0.13.0
+# torchaudio>=0.12.0
+
+# 优化算法（可选，用于高级优化）
+# scikit-optimize>=0.9.0
+# hyperopt>=0.2.7
+
+# 数据处理增强
+openpyxl>=3.0.0
+xlsxwriter>=3.0.0
+
+# 性能优化
+# numba>=0.56.0
+joblib>=1.1.0
+
+# 网络请求增强
+urllib3>=1.26.0
+certifi>=2022.0.0
+
+# 日志和调试
+# loguru>=0.6.0
+
+# 数学计算增强
+# sympy>=1.10.0
+
+# 统计分析
+# statsmodels>=0.13.0
+
+# 时间序列分析
+# prophet>=1.1.0
+
+# 安装说明：
+# 1. 基础功能：直接运行 pip install -r requirements.txt
+# 2. 深度学习功能：取消注释torch相关包并安装
+# 3. 高级优化功能：取消注释优化算法包并安装
+# 4. 完整功能：取消所有注释并安装全部包

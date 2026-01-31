@@ -21,6 +21,8 @@ class StrategyParams:
     exclude_top_n: bool = False
     exclude_front_n: int = 3
     exclude_back_n: int = 2
+    consecutive_mode: str = "max"  # "exact", "min", "max"
+    consecutive_check_type: str = "groups"  # "groups", "pairs"
 
 def genetic_algorithm_optimize(
     fitness_func: Callable[[StrategyParams], float],
